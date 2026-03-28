@@ -119,8 +119,10 @@ export type ScanResult = {
 
 export type ScanEvent =
   | { type: 'log'; message: string }
+  | { type: 'reddit_log'; message: string }
+  | { type: 'alibaba_log'; message: string }
   | { type: 'progress'; value: number }
-  | { type: 'stream_url'; url: string }
+  | { type: 'stream_url'; url: string; target?: 'shein' | 'alibaba' }
   | { type: 'result'; data: ScanResult }
   | { type: 'error'; message: string }
 
