@@ -20,6 +20,7 @@ export interface SanitizationResult {
     likelySourcedFrom: string
     analysis: string
   }
+  actionRecommendation?: ActionRecommendation
 }
 
 // ── Legacy/Detailed Scanner Types ───────────────────────────────────────────
@@ -39,7 +40,7 @@ export type PageSnapshot = {
 
 export type DetectedPattern = {
   pattern: string
-  severity: 'critical' | 'medium' | 'low'
+  severity: "critical" | "medium" | "low"
   evidence: string
   explanation: string
   element_html?: string
@@ -56,7 +57,7 @@ export type LogEntry = {
   id: string
   time: string
   text: string
-  level: 'info' | 'action' | 'warn' | 'success' | 'vision'
+  level: "info" | "action" | "warn" | "success" | "vision"
 }
 
 export type ProfileComparison = {
@@ -67,20 +68,26 @@ export type ProfileComparison = {
 
 export type TrustScore = {
   trust_score: number
-  verdict: 'trusted' | 'caution' | 'suspicious' | 'dangerous'
+  verdict: "trusted" | "caution" | "suspicious" | "dangerous"
   signals: string[]
   sources_checked: string[]
 }
 
 export type EthicalConcern = {
-  category: 'Data Privacy' | 'Environmental' | 'Labor Practices' | 'Business Practices' | 'Transparency' | 'Consumer Rights'
-  severity: 'high' | 'medium' | 'low'
+  category:
+    | "Data Privacy"
+    | "Environmental"
+    | "Labor Practices"
+    | "Business Practices"
+    | "Transparency"
+    | "Consumer Rights"
+  severity: "high" | "medium" | "low"
   concern: string
   evidence: string
 }
 
 export type EthicalAnalysis = {
-  overall: 'concerning' | 'mixed' | 'acceptable' | 'good'
+  overall: "concerning" | "mixed" | "acceptable" | "good"
   concerns: EthicalConcern[]
   pages_checked: string[]
 }
@@ -98,7 +105,7 @@ export type CheckoutAnalysis = {
 export type VisualDarkPattern = {
   type: string
   description: string
-  severity: 'critical' | 'medium' | 'low'
+  severity: "critical" | "medium" | "low"
 }
 
 export type VisualDarkPatterns = {
@@ -106,24 +113,39 @@ export type VisualDarkPatterns = {
   screenshotObservations: string
 }
 
+// ── Action recommendation ─────────────────────────────────────────────────────
+
+export type ActionVerdict = "safe" | "sketchy" | "skip"
+
+export type ActionRecommendation = {
+  verdict: ActionVerdict
+  headline: string // e.g. "540% markup on a $2 AliExpress product"
+  topFindings: string[] // 2-3 bullet points
+  ctaLabel: string // e.g. "Buy direct for $2.50 →"
+  ctaUrl?: string // e.g. AliExpress search URL
+  ctaSubtext?: string // e.g. "AliExpress · ships to your region"
+  evidenceScreenshot?: string // the single most compelling screenshot
+}
+
 export type ScanResult = {
   risk_score: number
-  verdict: 'clean' | 'low risk' | 'medium risk' | 'high risk' | 'critical'
+  verdict: "clean" | "low risk" | "medium risk" | "high risk" | "critical"
   patterns: DetectedPattern[]
   profileComparison?: ProfileComparison
   trustScore?: TrustScore
   ethicalAnalysis?: EthicalAnalysis
   checkoutAnalysis?: CheckoutAnalysis
   visualDarkPatterns?: VisualDarkPatterns
+  actionRecommendation?: ActionRecommendation
 }
 
 export type ScanEvent =
-  | { type: 'log'; message: string }
-  | { type: 'progress'; value: number }
-  | { type: 'stream_url'; url: string }
-  | { type: 'result'; data: ScanResult }
-  | { type: 'error'; message: string }
-  | { type: 'HEARTBEAT' }
-  | { type: 'STREAMING_URL'; url: string }
-  | { type: 'ACTION'; action: string; selector?: string; text?: string }
-  | { type: 'COMPLETE'; status: string; resultJson?: any }
+  | { type: "log"; message: string }
+  | { type: "progress"; value: number }
+  | { type: "stream_url"; url: string }
+  | { type: "result"; data: ScanResult }
+  | { type: "error"; message: string }
+  | { type: "HEARTBEAT" }
+  | { type: "STREAMING_URL"; url: string }
+  | { type: "ACTION"; action: string; selector?: string; text?: string }
+  | { type: "COMPLETE"; status: string; resultJson?: any }
