@@ -2,7 +2,7 @@ import { GoogleGenerativeAI } from '@google/generative-ai'
 import OpenAI from 'openai'
 import { generateText } from 'ai'
 import { openai as openaiSDK } from '@ai-sdk/openai'
-import type { PageSnapshot, ScanResult, TrustScore, EthicalAnalysis, ActionRecommendation } from './types'
+import type { PageSnapshot, ScanResult, SanitizationResult, TrustScore, EthicalAnalysis, ActionRecommendation } from './types'
 import { fetchPagePlain, getRedditSentiment } from './browser'
 
 // ── AI Provider ───────────────────────────────────────────────────────────────
@@ -197,7 +197,7 @@ export async function analyzeSnapshot(snapshot: PageSnapshot): Promise<ScanResul
 
 async function analyzeWithOpenAI(snapshot: PageSnapshot): Promise<ScanResult> {
   const { text } = await generateText({
-    model: openaiSDK('gpt-4o-mini'),
+    model: openaiSDK('gpt-4o'),
     system: PROMPT,
     prompt: buildDataContext(snapshot),
     temperature: 0.1,
@@ -225,46 +225,67 @@ async function analyzeWithGemini(snapshot: PageSnapshot): Promise<ScanResult> {
 export async function getTrustScore(
   domain: string,
   onLog: (msg: string) => void,
+  onStreamUrl?: (url: string) => void,
+  onTrustCheck?: (source: string, status: 'scanning' | 'done' | 'failed', finding?: string) => void,
 ): Promise<TrustScore> {
   const signalTexts: string[] = []
   const sources_checked: string[] = []
 
-  // Fetch review sources in parallel — plain fetch for static pages, TinyFish for Reddit
-  const reviewSources = [
-    { label: 'Trustpilot', url: `https://www.trustpilot.com/review/${domain}` },
-    { label: 'Sitejabber', url: `https://www.sitejabber.com/reviews/${domain}` },
+  const SOURCES = [
+    { key: 'Trustpilot',   url: `https://www.trustpilot.com/review/${domain}` },
+    { key: 'Sitejabber',   url: `https://www.sitejabber.com/reviews/${domain}` },
+    { key: 'ScamAdviser',  url: `https://www.scamadviser.com/check-website/${domain}` },
   ]
 
-  onLog(`Checking review sites and Reddit for ${domain}...`)
+  // Mark all sources as scanning immediately so the UI shows all pills at once
+  for (const src of SOURCES) onTrustCheck?.(src.key, 'scanning')
+  onTrustCheck?.('Reddit', 'scanning')
+  onTrustCheck?.('GPT-4o Analysis', 'scanning')
 
-  const [trustpilotResult, sitejabberResult, redditResult] = await Promise.allSettled([
-    fetchPagePlain(reviewSources[0].url),
-    fetchPagePlain(reviewSources[1].url),
-    getRedditSentiment(domain, onLog),
+  // Fetch review sites (plain fetch) + Reddit (TinyFish STEALTH) in parallel
+  const [tp, sj, sa, reddit] = await Promise.allSettled([
+    fetchPagePlain(SOURCES[0].url),
+    fetchPagePlain(SOURCES[1].url),
+    fetchPagePlain(SOURCES[2].url),
+    getRedditSentiment(domain, onLog, onStreamUrl),
   ])
 
-  for (let i = 0; i < reviewSources.length; i++) {
-    const settled = i === 0 ? trustpilotResult : sitejabberResult
-    const src = reviewSources[i]
-    if (settled.status === 'fulfilled') {
-      const text = extractText(settled.value).slice(0, 2500)
-      signalTexts.push(`[${src.label}]\n${text}`)
+  // Process plain-fetch review sites
+  const settled = [tp, sj, sa]
+  for (let i = 0; i < SOURCES.length; i++) {
+    const src = SOURCES[i]
+    const result = settled[i]
+    if (result.status === 'fulfilled') {
+      const text = extractText(result.value).slice(0, 2500)
+      // Quick star rating extraction for the finding label
+      const stars = result.value.match(/(\d\.\d)\s*(out of\s*)?(\d\s*stars?|\/\s*\d)/i)
+      const finding = stars ? `${stars[1]}★ found` : 'data retrieved'
+      signalTexts.push(`[${src.key}]\n${text}`)
       sources_checked.push(src.url)
+      onTrustCheck?.(src.key, 'done', finding)
     } else {
       sources_checked.push(`${src.url} (unavailable)`)
+      onTrustCheck?.(src.key, 'failed', 'blocked or unavailable')
     }
   }
 
-  if (redditResult.status === 'fulfilled') {
-    signalTexts.push(`[Reddit community]\n${redditResult.value}`)
+  // Process Reddit
+  if (reddit.status === 'fulfilled') {
+    const parsed = JSON.parse(reddit.value) as Record<string, unknown>
+    const sentiment = (parsed.overallSentiment as string) ?? 'unknown'
+    const scam = parsed.scamReports ? ' · scam reports found' : ''
+    const posts = parsed.postCount ? ` · ${parsed.postCount} posts` : ''
+    signalTexts.push(`[Reddit community]\n${reddit.value}`)
     sources_checked.push(`reddit.com/search?q=${domain}+reviews`)
+    onTrustCheck?.('Reddit', 'done', `${sentiment}${scam}${posts}`)
   } else {
-    sources_checked.push(`reddit.com (unavailable)`)
+    sources_checked.push('reddit.com (unavailable)')
+    onTrustCheck?.('Reddit', 'failed', 'blocked or unavailable')
   }
 
   const trustPrompt = `You are a website trust analyst. Assess the trustworthiness of the domain "${domain}".
 
-${signalTexts.length > 0 ? `Data from review sites and Reddit:\n\n${signalTexts.join('\n\n')}` : `No external review data was available. Use your training knowledge about "${domain}".`}
+${signalTexts.length > 0 ? `Data from review platforms and Reddit:\n\n${signalTexts.join('\n\n')}` : `No external review data was available. Use your training knowledge about "${domain}".`}
 
 Return ONLY valid JSON — no markdown, no backticks:
 {
@@ -292,6 +313,7 @@ Return ONLY valid JSON — no markdown, no backticks:
     parsed = JSON.parse(text) as Omit<TrustScore, 'sources_checked'>
   }
 
+  onTrustCheck?.('GPT-4o Analysis', 'done', `${parsed.verdict} · ${parsed.trust_score}/100`)
   onLog(`Trust assessment: ${parsed.verdict} (score: ${parsed.trust_score})`)
   return { ...parsed, sources_checked }
 }
@@ -455,6 +477,88 @@ Return ONLY valid JSON:
     visual?.visualPatterns.find(p => p.evidenceScreenshot)?.evidenceScreenshot
 
   if (topScreenshot) parsed.evidenceScreenshot = topScreenshot
+
+  onLog(`Verdict: ${parsed.verdict.toUpperCase()} — ${parsed.headline}`)
+  return parsed
+}
+
+// ── Synthesise action recommendation from TinyFish SanitizationResult ─────────
+// Called after the cart-clean agent finishes — GPT-4o synthesises the verdict.
+
+export async function synthesiseAction(
+  s: SanitizationResult,
+  query: string,
+  onLog: (msg: string) => void,
+): Promise<ActionRecommendation> {
+  onLog('GPT-4o synthesising verdict...')
+
+  const fees = s.junkFeesRemoved ?? []
+  const totalSaved = fees.reduce(
+    (sum, f) => sum + parseFloat(f.amount.replace(/[^0-9.]/g, '') || '0'),
+    0,
+  )
+
+  const prompt = `You are DarkWatch, an AI shopping protection agent. Based on this shopping analysis, produce one clear, honest verdict for the user.
+
+═══ SCAN DATA ═══
+Product searched: "${query}"
+Advertised price: ${s.basePrice}
+True price (after fees removed): ${s.finalPrice}
+Junk fees found: ${
+    fees.length > 0
+      ? fees.map(f => `• ${f.name} (${f.amount}): ${f.description}`).join('\n')
+      : 'none'
+  }
+Total fees stripped: $${totalSaved.toFixed(2)}
+
+Review trust score: ${s.trustScore ?? 'unknown'}/100
+Fake/incentivised reviews: ${s.fakeReviewsDetected ? 'YES — detected' : 'no'}
+
+Product origin analysis:
+- Likely dropshipped: ${s.productOrigin?.isDropshipped ? 'YES' : 'no'}
+- Wholesale price estimate: ${s.productOrigin?.wholesalePriceEstimate ?? 'unknown'}
+- Retail markup: ${s.productOrigin?.markupPercentage ?? 'unknown'}
+- Sourced from: ${s.productOrigin?.likelySourcedFrom ?? 'unknown'}
+- Agent analysis: ${s.productOrigin?.analysis ?? 'N/A'}
+
+═══ VERDICT RULES ═══
+"skip" → massive markup (>200%) from a wholesale source, OR multiple junk fees PLUS fake reviews, OR clearly untrustworthy site
+"sketchy" → some junk fees found, OR moderate markup, OR fake reviews detected, OR trust score below 50
+"safe" → no meaningful concerns — product appears legitimate, reviews genuine, no hidden fees
+
+═══ OUTPUT RULES ═══
+- headline: single most important finding, punchy, max 55 chars (e.g. "700% markup on a $2 AliExpress item")
+- topFindings: 2-3 specific bullets, each under 70 chars
+- ctaLabel: clear action e.g. "Buy direct for $3.50 →" or "Safe to buy →" or "Strip $8 in fees →"
+- ctaUrl: for dropshipped items use https://www.aliexpress.com/wholesale?SearchText=${encodeURIComponent(query)} — otherwise null
+- ctaSubtext: one short line of context e.g. "AliExpress · same product, 85% cheaper" or "No junk fees detected"
+
+Return ONLY valid JSON, no markdown:
+{
+  "verdict": "safe" | "sketchy" | "skip",
+  "headline": "...",
+  "topFindings": ["...", "..."],
+  "ctaLabel": "...",
+  "ctaUrl": "..." | null,
+  "ctaSubtext": "..."
+}`
+
+  const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+  const res = await openai.chat.completions.create({
+    model: 'gpt-4o',
+    messages: [{ role: 'user', content: prompt }],
+    response_format: { type: 'json_object' },
+    temperature: 0.1,
+    max_tokens: 400,
+  })
+
+  const parsed = JSON.parse(res.choices[0].message.content!) as ActionRecommendation
+  if (s.screenshotUrl) parsed.evidenceScreenshot = s.screenshotUrl
+
+  // Attach the product image so the UI can show a thumbnail next to the "buy here instead" CTA
+  if (s.productImageUrl && parsed.ctaUrl) {
+    parsed.ctaProductImageUrl = s.productImageUrl
+  }
 
   onLog(`Verdict: ${parsed.verdict.toUpperCase()} — ${parsed.headline}`)
   return parsed

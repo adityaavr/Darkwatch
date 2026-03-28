@@ -37,7 +37,7 @@ async function fetchWithHeaders(url: string, headers: Record<string, string>): P
   const res = await fetch(url, {
     headers,
     redirect: 'follow',
-    signal: AbortSignal.timeout(15000),
+    signal: AbortSignal.timeout(30000),
   })
   if (!res.ok) throw new Error(`HTTP ${res.status} fetching ${url}`)
   return res.text()
@@ -332,6 +332,7 @@ If you cannot capture a screenshot for a pattern, omit the evidenceScreenshot fi
 export async function getRedditSentiment(
   domain: string,
   onLog: (msg: string) => void,
+  onStreamUrl?: (url: string) => void,
 ): Promise<string> {
   onLog(`[TinyFish] Searching Reddit for "${domain}" reviews...`)
   const client = new TinyFish()
@@ -346,6 +347,8 @@ export async function getRedditSentiment(
   "fakeProductComplaints": true | false,
   "postCount": <number of relevant posts found>
 }`,
+    // STEALTH bypasses Reddit's bot detection — no live stream URL but actually works
+    browser_profile: BrowserProfile.STEALTH,
   })
   for await (const event of stream) {
     if (event.type === 'COMPLETE') {

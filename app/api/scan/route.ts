@@ -1,27 +1,37 @@
 import { NextRequest } from 'next/server'
-import { fetchPageTwice, compareProfiles, getCheckoutAnalysis, getVisualDarkPatterns } from '@/lib/browser'
-import { analyzeSnapshot, buildSnapshot, extractSocialProof, extractScarcity, extractTimers, getTrustScore, getEthicalAnalysis, getActionRecommendation } from '@/lib/ai'
-import type { ScanEvent } from '@/lib/types'
+import { cleanCart } from '@/lib/tinyfish-service'
+import { synthesiseAction, getTrustScore } from '@/lib/ai'
+import type { ScanResult, ScanEvent } from '@/lib/types'
+import type { SanitizationResult } from '@/lib/types'
+
+export const maxDuration = 300
 
 export async function POST(req: NextRequest) {
   const { url, productQuery } = await req.json()
-  const product: string = typeof productQuery === 'string' ? productQuery.trim() : ''
 
-  // Validate and normalize URL
-  let normalizedUrl: string = url?.trim() ?? ''
-  if (!normalizedUrl.startsWith('http://') && !normalizedUrl.startsWith('https://')) {
-    normalizedUrl = 'https://' + normalizedUrl
-  }
-  try {
-    new URL(normalizedUrl)
-  } catch {
-    return new Response(JSON.stringify({ error: 'Invalid URL format' }), {
+  if (!url || typeof url !== 'string') {
+    return new Response(JSON.stringify({ error: 'url is required' }), {
       status: 400,
       headers: { 'Content-Type': 'application/json' },
     })
   }
 
-  const domain = new URL(normalizedUrl).hostname.replace('www.', '')
+  let normalizedUrl = url.trim()
+  if (!normalizedUrl.startsWith('http://') && !normalizedUrl.startsWith('https://')) {
+    normalizedUrl = 'https://' + normalizedUrl
+  }
+  try { new URL(normalizedUrl) } catch {
+    return new Response(JSON.stringify({ error: 'Invalid URL' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    })
+  }
+
+  const query: string =
+    typeof productQuery === 'string' && productQuery.trim()
+      ? productQuery.trim()
+      : 'product'
+
   const encoder = new TextEncoder()
   const stream = new TransformStream<Uint8Array, Uint8Array>()
   const writer = stream.writable.getWriter()
@@ -30,146 +40,58 @@ export async function POST(req: NextRequest) {
     writer.write(encoder.encode(`data: ${JSON.stringify(event)}\n\n`))
   }
 
-  // Parse "MM:SS" or "HH:MM:SS" to total seconds for numeric comparison
-  function timerToSeconds(t: string): number {
-    const parts = t.split(':').map(Number)
-    if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2]
-    return parts[0] * 60 + (parts[1] ?? 0)
-  }
-
-  // Run scan async — do not await
   ;(async () => {
     try {
-      // ── Kick off parallel tasks immediately ─────────────────────────────────
-      // All run concurrently with the 8s fetch gap
-      const profilePromise = compareProfiles(
-        normalizedUrl,
-        (msg) => send({ type: 'log', message: msg }),
-      )
+      send({ type: 'progress', value: 5 })
+
+      const domain = new URL(normalizedUrl).hostname.replace('www.', '')
+
+      send({ type: 'log', message: `Agent launching — trust check running in parallel for ${domain}` })
+
+      // ── Trust check fires immediately in background — does NOT block the result ──
       const trustPromise = getTrustScore(
         domain,
         (msg) => send({ type: 'log', message: msg }),
-      )
-      const checkoutPromise = getCheckoutAnalysis(
+        (streamUrl) => send({ type: 'stream_url', url: streamUrl, label: '🔍 REDDIT AGENT · Community Reviews' }),
+        (source, status, finding) => send({ type: 'trust_check', source, status, finding }),
+      ).catch(() => null)
+
+      // ── Phase 1: TinyFish cart agent ──────────────────────────────────────
+      const sanitization = await cleanCart(
         normalizedUrl,
-        product,
-        (msg) => send({ type: 'log', message: msg }),
-      )
-      const visualPromise = getVisualDarkPatterns(
-        normalizedUrl,
-        (msg) => send({ type: 'log', message: msg }),
-      )
-      // Ethical analysis needs the main page text — resolved after first fetch
-      // We defer it until html1 is ready but still run in parallel with the 8s gap
-
-      // ── Main scan (has internal 8s wait) ────────────────────────────────────
-      const { html1, html2 } = await fetchPageTwice(
-        normalizedUrl,
-        8000,
-        (msg) => send({ type: 'log', message: msg }),
-        (value) => send({ type: 'progress', value }),
-        (url) => send({ type: 'stream_url', url }),
+        query,
+        (message) => send({ type: 'log', message }),
+        (streamUrl) => send({ type: 'stream_url', url: streamUrl, label: `🛒 CART AGENT · ${domain}` }),
       )
 
-      // Kick off ethical analysis as soon as we have html1 (runs during AI analysis)
-      const { extractText } = await import('@/lib/ai')
-      const ethicsPromise = getEthicalAnalysis(
-        normalizedUrl,
-        extractText(html1),
-        (msg) => send({ type: 'log', message: msg }),
-      )
+      send({ type: 'progress', value: 80 })
 
-      // Surface what we found in the two fetches
-      const timers1 = extractTimers(html1)
-      const timers2 = extractTimers(html2)
-      const socialProof = extractSocialProof(html1)
-      const scarcity = extractScarcity(html1)
+      // ── Phase 2: GPT-4o synthesis — runs immediately, no waiting for trust ─
+      send({ type: 'log', message: 'Sending findings to GPT-4o for verdict synthesis...' })
 
-      if (timers1.length > 0) {
-        const resetPair = timers1.reduce<{ t1: string; t2: string } | null>((found, t1, i) => {
-          if (found) return found
-          const t2 = timers2[i]
-          return t2 && timerToSeconds(t2) > timerToSeconds(t1) ? { t1, t2 } : null
-        }, null)
+      const baseScanResult = buildScanResult(sanitization)
 
-        send({
-          type: 'log',
-          message: resetPair
-            ? `⚠ Timer reset detected — ${resetPair.t1} → ${resetPair.t2} (confirms fake countdown)`
-            : `Found ${timers1.length} timer(s) — values decreased normally, no reset`,
-        })
-      } else {
-        send({ type: 'log', message: 'No countdown timers found on page' })
-      }
-
-      if (socialProof.length > 0) {
-        send({
-          type: 'log',
-          message: `Found ${socialProof.length} social proof claim(s) — e.g. "${socialProof[0].slice(0, 50)}"`,
-        })
-      }
-      if (scarcity.length > 0) {
-        send({
-          type: 'log',
-          message: `Found ${scarcity.length} scarcity claim(s) — e.g. "${scarcity[0].slice(0, 50)}"`,
-        })
-      }
-
-      send({ type: 'progress', value: 65 })
-      send({ type: 'log', message: 'Sending to AI for pattern classification...' })
-      send({ type: 'progress', value: 75 })
-
-      const snapshot = buildSnapshot(normalizedUrl, html1, html2)
-      const result = await analyzeSnapshot(snapshot)
-
-      // ── Collect parallel results ─────────────────────────────────────────────
-      const [profileSettled, trustSettled, ethicsSettled, checkoutSettled, visualSettled] =
-        await Promise.allSettled([
-          profilePromise,
-          trustPromise,
-          ethicsPromise,
-          checkoutPromise,
-          visualPromise,
-        ])
-
-      if (profileSettled.status === 'fulfilled') {
-        result.profileComparison = profileSettled.value
-      }
-      if (trustSettled.status === 'fulfilled') {
-        result.trustScore = trustSettled.value
-      }
-      if (ethicsSettled.status === 'fulfilled') {
-        result.ethicalAnalysis = ethicsSettled.value
-      }
-      if (checkoutSettled.status === 'fulfilled') {
-        result.checkoutAnalysis = checkoutSettled.value
-      }
-      if (visualSettled.status === 'fulfilled') {
-        result.visualDarkPatterns = visualSettled.value
-      }
-
-      // ── Build action recommendation from all gathered data ───────────────────
-      send({ type: 'log', message: 'Building action recommendation...' })
       try {
-        result.actionRecommendation = await getActionRecommendation(
-          normalizedUrl,
-          product,
-          result,
+        baseScanResult.actionRecommendation = await synthesiseAction(
+          sanitization,
+          query,
           (msg) => send({ type: 'log', message: msg }),
         )
       } catch {
-        // non-fatal — result still sent without recommendation
+        send({ type: 'log', message: 'AI synthesis unavailable — using rule-based verdict' })
+        baseScanResult.actionRecommendation = fallbackRec(sanitization, query)
       }
 
+      // ── Stream result immediately — user sees verdict now ─────────────────
       send({ type: 'progress', value: 100 })
-      send({
-        type: 'log',
-        message:
-          result.patterns.length > 0
-            ? `Analysis complete — ${result.patterns.length} pattern(s) detected`
-            : `Analysis complete — no dark patterns detected`,
-      })
-      send({ type: 'result', data: result })
+      send({ type: 'result', data: baseScanResult })
+
+      // ── Trust check patch — push update when it lands (non-blocking) ──────
+      const externalTrust = await trustPromise
+      if (externalTrust) {
+        send({ type: 'log', message: `Trust check complete — ${externalTrust.verdict} (${externalTrust.trust_score}/100)` })
+        send({ type: 'update', data: { trustScore: externalTrust } })
+      }
     } catch (err) {
       send({ type: 'error', message: err instanceof Error ? err.message : 'Scan failed' })
     } finally {
@@ -184,4 +106,89 @@ export async function POST(req: NextRequest) {
       Connection: 'keep-alive',
     },
   })
+}
+
+// ── Build ScanResult shell from SanitizationResult ────────────────────────────
+
+function buildScanResult(s: SanitizationResult): ScanResult {
+  const fees = s.junkFeesRemoved ?? []
+
+  const riskScore = Math.min(
+    98,
+    fees.length * 20 +
+      (s.fakeReviewsDetected ? 20 : 0) +
+      (s.productOrigin?.isDropshipped ? 15 : 0),
+  )
+
+  const verdict: ScanResult['verdict'] =
+    riskScore >= 60 ? 'high risk' :
+    riskScore >= 35 ? 'medium risk' :
+    riskScore >= 10 ? 'low risk' : 'clean'
+
+  return {
+    risk_score: riskScore,
+    verdict,
+    patterns: fees.map((f) => ({
+      pattern: f.name,
+      severity: 'critical' as const,
+      evidence: f.amount,
+      explanation: f.description,
+    })),
+    // Placeholder trust score from on-page signals only.
+    // Gets replaced by externalTrust (Reddit + Trustpilot) if that call succeeds.
+    trustScore: s.trustScore != null
+      ? {
+          trust_score: s.trustScore,
+          verdict:
+            s.trustScore >= 70 ? 'trusted' :
+            s.trustScore >= 45 ? 'caution' :
+            s.trustScore >= 25 ? 'suspicious' : 'dangerous',
+          signals: s.fakeReviewsDetected
+            ? ['Fake or incentivised reviews detected on the product page']
+            : ['On-page reviews appear genuine — no fake signals detected'],
+          sources_checked: ['Product page reviews (TinyFish agent)'],
+        }
+      : undefined,
+    // actionRecommendation is filled in by synthesiseAction after this
+  }
+}
+
+// ── Rule-based fallback (used if GPT-4o call fails) ──────────────────────────
+
+function fallbackRec(s: SanitizationResult, query: string) {
+  const fees = s.junkFeesRemoved ?? []
+  const isDropshipped = s.productOrigin?.isDropshipped ?? false
+  const wholesale = s.productOrigin?.wholesalePriceEstimate ?? ''
+  const markup = s.productOrigin?.markupPercentage ?? ''
+  const totalSaved = fees.reduce(
+    (sum, f) => sum + parseFloat(f.amount.replace(/[^0-9.]/g, '') || '0'),
+    0,
+  )
+
+  const verdict =
+    fees.length > 0 && isDropshipped ? 'skip' :
+    fees.length > 0 || isDropshipped || s.fakeReviewsDetected ? 'sketchy' : 'safe'
+
+  const findings: string[] = []
+  if (fees.length > 0)
+    findings.push(`${fees.length} junk fee${fees.length > 1 ? 's' : ''} stripped — saved $${totalSaved.toFixed(2)}`)
+  if (isDropshipped && markup)
+    findings.push(`${markup} markup on a ${wholesale} wholesale product`)
+  if (s.fakeReviewsDetected)
+    findings.push('Fake or incentivised reviews detected')
+
+  return {
+    verdict: verdict as 'safe' | 'sketchy' | 'skip',
+    headline:
+      isDropshipped && markup ? `${markup} markup — buy direct for ${wholesale}` :
+      fees.length > 0 ? `$${totalSaved.toFixed(2)} in junk fees stripped` :
+      `True price: ${s.finalPrice}`,
+    topFindings: findings.slice(0, 3),
+    ctaLabel: isDropshipped && wholesale ? `Buy direct for ${wholesale} →` : `True price: ${s.finalPrice}`,
+    ctaUrl: isDropshipped
+      ? `https://www.aliexpress.com/wholesale?SearchText=${encodeURIComponent(query)}`
+      : undefined,
+    ctaSubtext: isDropshipped ? 'AliExpress · ships worldwide' : undefined,
+    evidenceScreenshot: s.screenshotUrl ?? undefined,
+  }
 }

@@ -87,6 +87,7 @@ export type ActionRecommendation = {
   ctaUrl?: string                  // e.g. AliExpress search URL
   ctaSubtext?: string              // e.g. "AliExpress · ships to your region"
   evidenceScreenshot?: string      // the single most compelling screenshot
+  ctaProductImageUrl?: string      // product image from scanned site — shown in alt-buy CTA
 }
 
 export type ScanResult = {
@@ -104,8 +105,10 @@ export type ScanResult = {
 export type ScanEvent =
   | { type: 'log'; message: string }
   | { type: 'progress'; value: number }
-  | { type: 'stream_url'; url: string }
+  | { type: 'stream_url'; url: string; label: string }
+  | { type: 'trust_check'; source: string; status: 'scanning' | 'done' | 'failed'; finding?: string }
   | { type: 'result'; data: ScanResult }
+  | { type: 'update'; data: Partial<ScanResult> }
   | { type: 'error'; message: string }
 
 // ── Cart Cleanser / Sanitization ─────────────────────────────────────────────
@@ -129,6 +132,7 @@ export type SanitizationResult = {
   junkFeesRemoved: JunkFee[]
   finalPrice: string
   screenshotUrl?: string
+  productImageUrl?: string         // main product image URL captured by TinyFish agent
   trustScore?: number
   fakeReviewsDetected?: boolean
   productOrigin?: ProductOrigin

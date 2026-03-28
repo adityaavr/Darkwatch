@@ -14,6 +14,12 @@ import type { ScanResult, DetectedPattern, ScanEvent, ProfileComparison, TrustSc
 
 type LogEntry = { time: string; text: string; level: 'info' | 'action' | 'warn' | 'success' }
 
+type TrustCheckEntry = {
+  source: string
+  status: 'scanning' | 'done' | 'failed'
+  finding?: string
+}
+
 type ScanJob = {
   id: string
   url: string
@@ -21,7 +27,8 @@ type ScanJob = {
   status: 'scanning' | 'done' | 'error'
   logs: LogEntry[]
   progress: number
-  streamingUrl?: string
+  streamingUrls: { url: string; label: string }[]
+  trustChecks: TrustCheckEntry[]
   result?: ScanResult
   error?: string
 }
@@ -194,7 +201,6 @@ function PatternCard({
   siteUrl: string
 }) {
   const color = getSeverityColor(pattern.severity)
-  const [elementTab, setElementTab] = useState<'preview' | 'html'>('preview')
 
   return (
     <motion.div
@@ -202,7 +208,23 @@ function PatternCard({
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay: 0.08 * index, duration: 0.3 }}
     >
-      <Card className="bg-white border-[rgba(0,0,0,0.08)] shadow-none">
+      <Card className="bg-white border-[rgba(0,0,0,0.08)] shadow-none overflow-hidden">
+        {/* Screenshot evidence — shown prominently if available */}
+        {(pattern as any).evidenceScreenshot && (
+          <div className="relative">
+            <img
+              src={(pattern as any).evidenceScreenshot}
+              alt={`Evidence: ${pattern.pattern}`}
+              className="w-full object-cover"
+              style={{ maxHeight: 180 }}
+            />
+            <div className="absolute bottom-0 left-0 right-0 px-3 py-1.5 bg-gradient-to-t from-black/60 to-transparent">
+              <span className="text-[9px] font-mono text-white/70 uppercase tracking-widest">
+                📸 captured evidence
+              </span>
+            </div>
+          </div>
+        )}
         <CardContent className="p-4">
           <div className="flex items-start justify-between gap-2 mb-2">
             <span className="font-semibold text-[#111111] text-sm leading-snug">{pattern.pattern}</span>
@@ -214,65 +236,92 @@ function PatternCard({
             </Badge>
           </div>
           <p className="text-[#6b7280] text-xs mb-3 leading-relaxed">{pattern.explanation}</p>
-          <div className="bg-[#fafaf8] border border-[rgba(0,0,0,0.08)] rounded-md p-3 mb-3">
-            <span className="text-[10px] text-[#6b7280] font-medium uppercase tracking-wide block mb-1">
-              Evidence
-            </span>
-            <code className="text-xs text-[#111111] font-mono leading-relaxed">
-              &ldquo;{pattern.evidence}&rdquo;
-            </code>
+          <div className="bg-[#fafaf8] border border-[rgba(0,0,0,0.08)] rounded-md p-3">
+            <span className="text-[10px] text-[#6b7280] font-medium uppercase tracking-wide block mb-1">Evidence</span>
+            <code className="text-xs text-[#111111] font-mono leading-relaxed">&ldquo;{pattern.evidence}&rdquo;</code>
           </div>
-
-          {/* Element HTML — Preview / HTML toggle */}
-          {pattern.element_html && (
-            <div className="mb-3">
-              <div className="flex items-center gap-1 mb-2">
-                <span className="text-[10px] text-[#6b7280] font-medium uppercase tracking-wide flex-1">
-                  Element on page
-                </span>
-                <div className="flex rounded-md overflow-hidden border border-[rgba(0,0,0,0.1)]">
-                  {(['preview', 'html'] as const).map((tab) => (
-                    <button
-                      key={tab}
-                      onClick={() => setElementTab(tab)}
-                      className="text-[10px] px-2.5 py-1 font-medium transition-colors"
-                      style={{
-                        backgroundColor: elementTab === tab ? '#111111' : 'transparent',
-                        color: elementTab === tab ? '#ffffff' : '#6b7280',
-                      }}
-                    >
-                      {tab === 'preview' ? 'Preview' : 'HTML'}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {elementTab === 'preview' ? (
-                <div className="bg-[#fafaf8] border border-[rgba(0,0,0,0.08)] rounded-md p-3">
-                  <p className="text-sm text-[#111111] leading-relaxed">
-                    {htmlToText(pattern.element_html)}
-                  </p>
-                </div>
-              ) : (
-                <pre className="bg-[#fafaf8] border border-[rgba(0,0,0,0.08)] rounded-md p-3 text-[10px] font-mono text-[#6b7280] overflow-auto max-h-36 whitespace-pre-wrap break-all">
-                  {pattern.element_html}
-                </pre>
-              )}
-            </div>
-          )}
-
-          {/* Link to site — TinyFish will provide specific sub-page URLs */}
-          <a
-            href={siteUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-[11px] font-mono hover:underline"
-            style={{ color: BLUE }}
-          >
-            View on site →
-          </a>
         </CardContent>
       </Card>
+    </motion.div>
+  )
+}
+
+// ── Trust Intelligence Panel ──────────────────────────────────────────────────
+
+const SOURCE_ICONS: Record<string, string> = {
+  'Trustpilot':     '⭐',
+  'Sitejabber':     '🔎',
+  'ScamAdviser':    '🛡',
+  'Reddit':         '💬',
+  'GPT-4o Analysis':'🤖',
+}
+
+function TrustIntelPanel({ checks }: { checks: TrustCheckEntry[] }) {
+  if (checks.length === 0) return null
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.35 }}
+      className="rounded-xl overflow-hidden border border-[rgba(0,0,0,0.08)] bg-[#0a0a0a]"
+    >
+      {/* Header */}
+      <div className="flex items-center gap-2 px-4 py-2 border-b border-[rgba(255,255,255,0.06)]">
+        <span className="w-2 h-2 rounded-full bg-[#a78bfa] animate-pulse shrink-0" />
+        <span className="text-[10px] font-mono text-[#4b5563] tracking-widest">
+          TRUST INTELLIGENCE · SCANNING {checks.length} SOURCES
+        </span>
+      </div>
+
+      {/* Source rows */}
+      <div className="divide-y divide-[rgba(255,255,255,0.04)]">
+        {checks.map((c) => (
+          <motion.div
+            key={c.source}
+            initial={{ opacity: 0, x: -6 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ duration: 0.2 }}
+            className="flex items-center gap-3 px-4 py-2.5"
+          >
+            {/* Status dot */}
+            {c.status === 'scanning' && (
+              <span className="w-1.5 h-1.5 rounded-full bg-[#f59e0b] animate-ping shrink-0" />
+            )}
+            {c.status === 'done' && (
+              <span className="w-1.5 h-1.5 rounded-full bg-[#10b981] shrink-0" />
+            )}
+            {c.status === 'failed' && (
+              <span className="w-1.5 h-1.5 rounded-full bg-[#374151] shrink-0" />
+            )}
+
+            {/* Icon + source name */}
+            <span className="text-sm leading-none shrink-0">
+              {SOURCE_ICONS[c.source] ?? '🌐'}
+            </span>
+            <span className="font-mono text-[11px] text-[#9ca3af] shrink-0 w-28">
+              {c.source}
+            </span>
+
+            {/* Finding / status text */}
+            <span
+              className="text-[11px] font-mono truncate"
+              style={{
+                color: c.status === 'scanning'
+                  ? '#4b5563'
+                  : c.status === 'failed'
+                    ? '#374151'
+                    : '#6ee7b7',
+              }}
+            >
+              {c.status === 'scanning'
+                ? 'scanning...'
+                : c.status === 'failed'
+                  ? c.finding ?? 'blocked'
+                  : c.finding ?? 'done'}
+            </span>
+          </motion.div>
+        ))}
+      </div>
     </motion.div>
   )
 }
@@ -376,40 +425,86 @@ function BentoScanCard({
           </>
         )}
 
-        {/* Done: arc gauge + summary */}
+        {/* Done: verdict + headline + signals */}
         {isDone && result && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.4 }}>
-            <div className="flex justify-center mb-3">
-              <ArcGauge score={result.risk_score} size="sm" />
-            </div>
-            <div className="text-center mb-2 text-sm text-[#6b7280]">
-              <span className="font-bold text-[#111111]">{result.patterns.length}</span>{' '}
-              pattern{result.patterns.length !== 1 ? 's' : ''} detected
-            </div>
-            {result.patterns.length > 0 && (
-              <div className="flex gap-1 justify-center flex-wrap mb-2">
-                {result.patterns.slice(0, 2).map((p, i) => (
-                  <span
-                    key={i}
-                    className="text-[9px] px-1.5 py-0.5 rounded-full font-medium"
-                    style={{
-                      backgroundColor: getSeverityColor(p.severity) + '18',
-                      color: getSeverityColor(p.severity),
-                    }}
-                  >
-                    {p.pattern}
-                  </span>
-                ))}
-                {result.patterns.length > 2 && (
-                  <span className="text-[9px] px-1.5 py-0.5 rounded-full font-medium bg-[rgba(0,0,0,0.05)] text-[#6b7280]">
-                    +{result.patterns.length - 2} more
-                  </span>
-                )}
-              </div>
-            )}
-            <p className="text-center text-[10px] text-[#6b7280] mt-2">
-              {selected ? '↑ hide details' : '↓ view details'}
-            </p>
+            {(() => {
+              const rec = result.actionRecommendation
+              const cfg = rec ? VERDICT_CONFIG[rec.verdict] : null
+              return (
+                <>
+                  {/* Verdict banner */}
+                  {cfg && rec ? (
+                    <div
+                      className="rounded-xl px-3 py-2.5 mb-3 flex items-start gap-2.5"
+                      style={{ background: cfg.bg, border: `1px solid ${cfg.border}` }}
+                    >
+                      <span className="text-xl leading-none mt-0.5">{cfg.icon}</span>
+                      <div className="min-w-0">
+                        <div className="text-[9px] font-bold tracking-widest mb-0.5" style={{ color: cfg.color }}>
+                          {cfg.label}
+                        </div>
+                        <div className="text-sm font-semibold text-[#111111] leading-snug">
+                          {rec.headline}
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex justify-center mb-3">
+                      <ArcGauge score={result.risk_score} size="sm" />
+                    </div>
+                  )}
+
+                  {/* Signal pills — always show something interesting */}
+                  <div className="flex flex-wrap gap-1.5 mb-3">
+                    {result.patterns.length > 0 && (
+                      <span
+                        className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full font-medium"
+                        style={{ backgroundColor: ACCENT + '15', color: ACCENT }}
+                      >
+                        🚫 {result.patterns.length} junk fee{result.patterns.length > 1 ? 's' : ''} found
+                      </span>
+                    )}
+                    {rec?.ctaUrl && (
+                      <span
+                        className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full font-medium"
+                        style={{ backgroundColor: BLUE + '15', color: BLUE }}
+                      >
+                        📦 Dropshipped
+                      </span>
+                    )}
+                    {result.trustScore && result.trustScore.trust_score < 55 && (
+                      <span
+                        className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full font-medium"
+                        style={{ backgroundColor: AMBER + '15', color: '#92400e' }}
+                      >
+                        ⚠ Trust {result.trustScore.trust_score}/100
+                      </span>
+                    )}
+                    {result.trustScore?.signals?.some(s => s.toLowerCase().includes('fake')) && (
+                      <span
+                        className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full font-medium"
+                        style={{ backgroundColor: AMBER + '15', color: '#92400e' }}
+                      >
+                        ⭐ Fake reviews
+                      </span>
+                    )}
+                    {result.patterns.length === 0 && !rec?.ctaUrl && result.trustScore && result.trustScore.trust_score >= 55 && (
+                      <span
+                        className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full font-medium"
+                        style={{ backgroundColor: GREEN + '15', color: '#065f46' }}
+                      >
+                        ✓ No red flags
+                      </span>
+                    )}
+                  </div>
+
+                  <p className="text-center text-[10px] text-[#6b7280]">
+                    {selected ? '↑ hide details' : '↓ tap for full analysis'}
+                  </p>
+                </>
+              )
+            })()}
           </motion.div>
         )}
 
@@ -953,6 +1048,36 @@ function ActionCard({ rec, job }: { rec: ActionRecommendation; job: ScanJob }) {
         ))}
       </div>
 
+      {/* Product thumbnail — shown when recommending an alternative purchase */}
+      {rec.ctaUrl && rec.ctaProductImageUrl && (
+        <div className="px-5 pb-3 bg-white">
+          <div
+            className="rounded-xl overflow-hidden border flex items-center gap-3 p-3"
+            style={{ borderColor: 'rgba(0,0,0,0.08)', background: '#fafaf8' }}
+          >
+            <div className="shrink-0 w-20 h-20 rounded-lg overflow-hidden border border-[rgba(0,0,0,0.08)] bg-white flex items-center justify-center">
+              <img
+                src={rec.ctaProductImageUrl}
+                alt="Product"
+                className="w-full h-full object-contain"
+                onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
+              />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="text-[9px] font-mono text-[#9ca3af] uppercase tracking-widest mb-1">
+                As seen on {getDomain(job.url)}
+              </div>
+              <div className="text-xs font-semibold text-[#111111] leading-snug mb-0.5">
+                Same product
+              </div>
+              <div className="text-[11px] text-[#6b7280]">
+                Available for less on {rec.ctaSubtext?.split('·')[0]?.trim() ?? 'another site'}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* CTA */}
       <div className="px-5 pb-5 bg-white">
         {rec.ctaUrl ? (
@@ -985,26 +1110,24 @@ function ActionCard({ rec, job }: { rec: ActionRecommendation; job: ScanJob }) {
 
 function ResultDetail({ job }: { job: ScanJob }) {
   const result = job.result!
-  const [showFullAnalysis, setShowFullAnalysis] = useState(false)
-  const color = getRiskColor(result.risk_score)
-  const critical = result.patterns.filter((p) => p.severity === 'critical').length
-  const medium = result.patterns.filter((p) => p.severity === 'medium').length
-  const low = result.patterns.filter((p) => p.severity === 'low').length
+  const [showMore, setShowMore] = useState(false)
 
   return (
     <div className="space-y-4">
-      {/* ── ACTION CARD — the primary result ── */}
+      {/* ── PRIMARY ACTION CARD ── */}
       {result.actionRecommendation ? (
         <ActionCard rec={result.actionRecommendation} job={job} />
       ) : (
-        /* Fallback if recommendation not yet ready */
         <div className="flex items-center gap-3 px-5 py-4 rounded-2xl border border-[rgba(0,0,0,0.08)] bg-white">
           <ArcGauge score={result.risk_score} size="sm" label="RISK" />
           {result.trustScore && (
             <ArcGauge score={result.trustScore.trust_score} size="sm" colorFn={getTrustColor} label="TRUST" />
           )}
           <div>
-            <Badge className="text-sm font-bold px-3 py-1 border-0 mb-1" style={{ backgroundColor: color + '18', color }}>
+            <Badge
+              className="text-sm font-bold px-3 py-1 border-0 mb-1"
+              style={{ backgroundColor: getRiskColor(result.risk_score) + '18', color: getRiskColor(result.risk_score) }}
+            >
               {result.verdict.toUpperCase()}
             </Badge>
             <p className="text-xs text-[#6b7280]">
@@ -1014,70 +1137,59 @@ function ResultDetail({ job }: { job: ScanJob }) {
         </div>
       )}
 
-      {/* ── TOGGLE — full analysis ── */}
-      <button
-        onClick={() => setShowFullAnalysis((v) => !v)}
-        className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border border-[rgba(0,0,0,0.08)] text-xs font-medium text-[#6b7280] hover:border-[rgba(0,0,0,0.2)] transition-colors bg-white"
-      >
-        {showFullAnalysis ? '↑ Hide full analysis' : '↓ See full analysis'}
-      </button>
-
-      {/* ── FULL ANALYSIS (collapsed by default) ── */}
-      {showFullAnalysis && (
-        <div className="space-y-6">
-          {/* Agent trace */}
-          <div>
-            <h3 className="text-xs font-semibold text-[#6b7280] uppercase tracking-wide mb-2">Agent trace</h3>
-            <div className="rounded-xl overflow-hidden" style={{ background: '#0d0d0d', border: '1px solid rgba(255,255,255,0.06)' }}>
-              <div className="px-4 py-2 border-b border-[rgba(255,255,255,0.05)] flex items-center gap-2">
-                <span className="w-1.5 h-1.5 rounded-full bg-[#10b981]" />
-                <span className="text-[9px] font-mono text-[#374151] tracking-widest">COMPLETED · {job.logs.length} EVENTS</span>
-              </div>
-              <div className="p-4 space-y-2 max-h-56 overflow-y-auto">
-                {job.logs.map((log, i) => (
-                  <div key={i} className="flex items-start gap-2">
-                    <span className="text-[#374151] font-mono text-[10px] shrink-0 mt-px">{log.time}</span>
-                    <span className="font-mono text-[10px] shrink-0 font-semibold" style={{ color: LOG_LEVEL_COLORS[log.level] }}>
-                      {LOG_LEVEL_LABELS[log.level]}
-                    </span>
-                    <span className="text-[11px] font-mono leading-relaxed" style={{ color: '#9ca3af' }}>{log.text}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          {/* Stat pills */}
-          <div className="grid grid-cols-3 gap-3">
-            {[
-              { label: 'Critical', count: critical, color: ACCENT },
-              { label: 'Medium', count: medium, color: AMBER },
-              { label: 'Low', count: low, color: BLUE },
-            ].map(({ label, count, color: c }) => (
-              <Card key={label} className="bg-white border-[rgba(0,0,0,0.08)] shadow-none">
-                <CardContent className="p-4 text-center">
-                  <div className="text-2xl font-black mb-1" style={{ color: c }}>{count}</div>
-                  <div className="text-xs text-[#6b7280] font-medium">{label}</div>
-                </CardContent>
-              </Card>
+      {/* ── FEES / PATTERNS — visible by default ── */}
+      {result.patterns.length > 0 && (
+        <div>
+          <h3 className="text-xs font-semibold text-[#6b7280] uppercase tracking-wide mb-3">
+            Fees & patterns detected
+          </h3>
+          <div className="space-y-3">
+            {result.patterns.map((p, i) => (
+              <PatternCard key={i} pattern={p} index={i} siteUrl={job.url} />
             ))}
           </div>
+        </div>
+      )}
 
-          {/* Pattern cards */}
-          {result.patterns.length > 0 && (
-            <div>
-              <h3 className="text-xs font-semibold text-[#6b7280] uppercase tracking-wide mb-3">Detected patterns</h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                {result.patterns.map((p, i) => <PatternCard key={i} pattern={p} index={i} siteUrl={job.url} />)}
-              </div>
-            </div>
-          )}
+      {/* ── MORE DETAILS — collapsed ── */}
+      <button
+        onClick={() => setShowMore((v) => !v)}
+        className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border border-[rgba(0,0,0,0.08)] text-xs font-medium text-[#6b7280] hover:border-[rgba(0,0,0,0.2)] transition-colors bg-white"
+      >
+        {showMore ? '↑ Less' : '↓ More details'}
+      </button>
 
+      {showMore && (
+        <div className="space-y-6">
           {result.trustScore && <TrustScoreSection data={result.trustScore} />}
           {result.ethicalAnalysis && <EthicalAnalysisSection data={result.ethicalAnalysis} />}
           {result.profileComparison && <PriceComparisonSection data={result.profileComparison} />}
           {result.checkoutAnalysis && <CheckoutAnalysisSection data={result.checkoutAnalysis} />}
           {result.visualDarkPatterns && <VisualDarkPatternsSection data={result.visualDarkPatterns} />}
+
+          {/* Agent trace */}
+          {job.logs.length > 0 && (
+            <div>
+              <h3 className="text-xs font-semibold text-[#6b7280] uppercase tracking-wide mb-2">Agent trace</h3>
+              <div className="rounded-xl overflow-hidden" style={{ background: '#0d0d0d', border: '1px solid rgba(255,255,255,0.06)' }}>
+                <div className="px-4 py-2 border-b border-[rgba(255,255,255,0.05)] flex items-center gap-2">
+                  <span className="w-1.5 h-1.5 rounded-full bg-[#10b981]" />
+                  <span className="text-[9px] font-mono text-[#374151] tracking-widest">COMPLETED · {job.logs.length} STEPS</span>
+                </div>
+                <div className="p-4 space-y-2 max-h-56 overflow-y-auto">
+                  {job.logs.map((log, i) => (
+                    <div key={i} className="flex items-start gap-2">
+                      <span className="text-[#374151] font-mono text-[10px] shrink-0 mt-px">{log.time}</span>
+                      <span className="font-mono text-[10px] shrink-0 font-semibold" style={{ color: LOG_LEVEL_COLORS[log.level] }}>
+                        {LOG_LEVEL_LABELS[log.level]}
+                      </span>
+                      <span className="text-[11px] font-mono leading-relaxed" style={{ color: '#9ca3af' }}>{log.text}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -1152,7 +1264,33 @@ export default function Page() {
                 )
               } else if (event.type === 'stream_url') {
                 setJobs((prev) =>
-                  prev.map((j) => (j.id === job.id ? { ...j, streamingUrl: event.url } : j)),
+                  prev.map((j) =>
+                    j.id === job.id
+                      ? { ...j, streamingUrls: [...j.streamingUrls, { url: event.url, label: event.label }] }
+                      : j,
+                  ),
+                )
+              } else if (event.type === 'trust_check') {
+                setJobs((prev) =>
+                  prev.map((j) => {
+                    if (j.id !== job.id) return j
+                    const existing = j.trustChecks.find((c) => c.source === event.source)
+                    const updated: TrustCheckEntry = { source: event.source, status: event.status, finding: event.finding }
+                    return {
+                      ...j,
+                      trustChecks: existing
+                        ? j.trustChecks.map((c) => (c.source === event.source ? updated : c))
+                        : [...j.trustChecks, updated],
+                    }
+                  }),
+                )
+              } else if (event.type === 'update') {
+                setJobs((prev) =>
+                  prev.map((j) =>
+                    j.id === job.id && j.result
+                      ? { ...j, result: { ...j.result, ...event.data } }
+                      : j,
+                  ),
                 )
               } else if (event.type === 'result') {
                 setJobs((prev) =>
@@ -1210,6 +1348,8 @@ export default function Page() {
       status: 'scanning',
       logs: [],
       progress: 0,
+      streamingUrls: [],
+      trustChecks: [],
     }
     setJobs((prev) => [...prev, job])
     startScan(job)
@@ -1411,34 +1551,61 @@ export default function Page() {
                 ))}
               </div>
 
-              {/* Live browser panel — appears when TinyFish streaming URL arrives */}
-              <AnimatePresence>
-                {jobs.some((j) => j.status === 'scanning' && j.streamingUrl) && (() => {
-                  const activeStreamUrl = jobs.find((j) => j.status === 'scanning' && j.streamingUrl)?.streamingUrl
-                  return activeStreamUrl ? (
+              {/* Live browser panels — one per active TinyFish stream, side by side */}
+              {(() => {
+                const activeStreams = jobs
+                  .filter((j) => j.status === 'scanning')
+                  .flatMap((j) => j.streamingUrls)
+                if (activeStreams.length === 0) return null
+                return (
+                  <AnimatePresence>
                     <motion.div
-                      key="live-browser"
-                      initial={{ opacity: 0, height: 0 }}
-                      animate={{ opacity: 1, height: 480 }}
-                      exit={{ opacity: 0, height: 0 }}
+                      key="live-browsers"
+                      initial={{ opacity: 0, y: 12 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: 8 }}
                       transition={{ duration: 0.4, ease: 'easeOut' }}
-                      className="mt-4 rounded-xl overflow-hidden border border-[rgba(0,0,0,0.08)] bg-[#0a0a0a]"
+                      className={`mt-4 grid gap-3 ${activeStreams.length >= 2 ? 'grid-cols-2' : 'grid-cols-1'}`}
                     >
-                      <div className="flex items-center gap-2 px-4 py-2 border-b border-[rgba(255,255,255,0.06)]">
-                        <span className="w-2 h-2 rounded-full bg-[#10b981]" style={{ boxShadow: '0 0 6px #10b981' }} />
-                        <span className="text-[10px] font-mono text-[#4b5563] tracking-widest">LIVE BROWSER · AGENT CONTROLLED</span>
-                      </div>
-                      <iframe
-                        src={activeStreamUrl}
-                        className="w-full"
-                        style={{ height: 446, border: 'none', display: 'block' }}
-                        title="TinyFish live browser"
-                        sandbox="allow-scripts allow-same-origin allow-forms"
-                      />
+                      {activeStreams.map(({ url, label }) => (
+                        <div
+                          key={url}
+                          className="rounded-xl overflow-hidden border border-[rgba(0,0,0,0.08)] bg-[#0a0a0a]"
+                        >
+                          <div className="flex items-center gap-2 px-4 py-2 border-b border-[rgba(255,255,255,0.06)]">
+                            <span
+                              className="w-2 h-2 rounded-full bg-[#10b981] shrink-0"
+                              style={{ boxShadow: '0 0 6px #10b981' }}
+                            />
+                            <span className="text-[10px] font-mono text-[#4b5563] tracking-widest truncate">
+                              {label}
+                            </span>
+                          </div>
+                          <iframe
+                            src={url}
+                            className="w-full"
+                            style={{ height: activeStreams.length >= 2 ? 340 : 446, border: 'none', display: 'block' }}
+                            title={label}
+                            allow="clipboard-read; clipboard-write"
+                          />
+                        </div>
+                      ))}
                     </motion.div>
-                  ) : null
-                })()}
-              </AnimatePresence>
+                  </AnimatePresence>
+                )
+              })()}
+
+              {/* Trust intelligence panel — shows while trust check is running */}
+              {(() => {
+                const activeTrustChecks = jobs
+                  .filter((j) => j.status === 'scanning')
+                  .flatMap((j) => j.trustChecks)
+                return activeTrustChecks.length > 0 ? (
+                  <div className="mt-3">
+                    <TrustIntelPanel checks={activeTrustChecks} />
+                  </div>
+                ) : null
+              })()}
 
               {/* Detail panel */}
               <AnimatePresence>
