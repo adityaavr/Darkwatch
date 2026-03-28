@@ -350,16 +350,22 @@ export async function getRedditSentiment(
     // STEALTH bypasses Reddit's bot detection — no live stream URL but actually works
     browser_profile: BrowserProfile.STEALTH,
   })
-  for await (const event of stream) {
-    if (event.type === 'COMPLETE') {
-      const result = event.result as Record<string, unknown>
-      const sentiment = result.overallSentiment as string ?? 'unknown'
-      const scam = result.scamReports ? ' ⚠ scam reports found' : ''
-      onLog(`Reddit scan complete — sentiment: ${sentiment}${scam}`)
-      return JSON.stringify(result)
-    }
-  }
-  throw new Error('TinyFish Reddit stream ended without COMPLETE event')
+  const result = await Promise.race([
+    (async () => {
+      for await (const event of stream) {
+        if (event.type === 'COMPLETE') return event.result as Record<string, unknown>
+      }
+      throw new Error('Reddit stream ended without COMPLETE')
+    })(),
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error('Reddit scan timed out after 120s')), 120_000),
+    ),
+  ])
+
+  const sentiment = result.overallSentiment as string ?? 'unknown'
+  const scam = result.scamReports ? ' ⚠ scam reports found' : ''
+  onLog(`Reddit scan complete — sentiment: ${sentiment}${scam}`)
+  return JSON.stringify(result)
 }
 
 // ── Utility ───────────────────────────────────────────────────────────────────

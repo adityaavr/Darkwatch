@@ -86,8 +86,11 @@ export async function POST(req: NextRequest) {
       send({ type: 'progress', value: 100 })
       send({ type: 'result', data: baseScanResult })
 
-      // ── Trust check patch — push update when it lands (non-blocking) ──────
-      const externalTrust = await trustPromise
+      // ── Trust check patch — give it 90s after result, then move on regardless ─
+      const externalTrust = await Promise.race([
+        trustPromise,
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), 180_000)),
+      ])
       if (externalTrust) {
         send({ type: 'log', message: `Trust check complete — ${externalTrust.verdict} (${externalTrust.trust_score}/100)` })
         send({ type: 'update', data: { trustScore: externalTrust } })

@@ -161,26 +161,28 @@ export async function cleanCart(
   }
   const clearTimers = () => { for (const t of logTimers) clearTimeout(t) }
 
-  // ── Attempt 1: LITE — gives the user a live browser stream (75s hard limit) ─
+  // ── Attempt 1: LITE — live browser stream, runs until it genuinely errors ────
+  // No hard timeout — let TinyFish take as long as needed to complete the full
+  // shopping flow. The route's maxDuration = 300 is the real ceiling.
   try {
-    const liteTimeout = new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error('LITE timed out after 75s')), 75_000),
-    )
-    const result = await Promise.race([
-      runAgent(url, query, BrowserProfile.LITE, onLog, logTimers, onStreamUrl),
-      liteTimeout,
-    ])
+    const result = await runAgent(url, query, BrowserProfile.LITE, onLog, logTimers, onStreamUrl)
     if (hasUsefulData(result)) return result
     throw new Error('LITE returned no usable data')
   } catch (err) {
     clearTimers()
     const reason = err instanceof Error ? err.message : 'unknown error'
-    onLog(`Lite browser blocked (${reason}) — switching to stealth...`, 'warn')
+    onLog(`Lite browser hit an error (${reason}) — switching to stealth...`, 'warn')
   }
 
-  // ── Attempt 2: STEALTH — no live view but bypasses bot detection ──────────
+  // ── Attempt 2: STEALTH — only reached if LITE actually threw, not just slow ──
   onLog('Stealth browser launching — agent will complete the scan...', 'action')
-  return runAgent(url, query, BrowserProfile.STEALTH, onLog, [], undefined)
+  try {
+    return await runAgent(url, query, BrowserProfile.STEALTH, onLog, [], undefined)
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : 'unknown'
+    onLog(`Stealth agent could not complete (${reason}) — returning partial data`, 'warn')
+    return { basePrice: 'unknown', junkFeesRemoved: [], finalPrice: 'unknown' }
+  }
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
