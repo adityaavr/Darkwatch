@@ -1,10 +1,11 @@
 import { NextRequest } from 'next/server'
-import { fetchPageTwice, compareProfiles } from '@/lib/browser'
+import { fetchPageTwice, compareProfiles, getCheckoutAnalysis, getVisualDarkPatterns } from '@/lib/browser'
 import { analyzeSnapshot, buildSnapshot, extractSocialProof, extractScarcity, extractTimers, getTrustScore, getEthicalAnalysis } from '@/lib/ai'
 import type { ScanEvent } from '@/lib/types'
 
 export async function POST(req: NextRequest) {
-  const { url } = await req.json()
+  const { url, productQuery } = await req.json()
+  const product: string = typeof productQuery === 'string' ? productQuery.trim() : ''
 
   // Validate and normalize URL
   let normalizedUrl: string = url?.trim() ?? ''
@@ -40,13 +41,22 @@ export async function POST(req: NextRequest) {
   ;(async () => {
     try {
       // ── Kick off parallel tasks immediately ─────────────────────────────────
-      // Profile comparison + trust score run concurrently with the 8s fetch gap
+      // All run concurrently with the 8s fetch gap
       const profilePromise = compareProfiles(
         normalizedUrl,
         (msg) => send({ type: 'log', message: msg }),
       )
       const trustPromise = getTrustScore(
         domain,
+        (msg) => send({ type: 'log', message: msg }),
+      )
+      const checkoutPromise = getCheckoutAnalysis(
+        normalizedUrl,
+        product,
+        (msg) => send({ type: 'log', message: msg }),
+      )
+      const visualPromise = getVisualDarkPatterns(
+        normalizedUrl,
         (msg) => send({ type: 'log', message: msg }),
       )
       // Ethical analysis needs the main page text — resolved after first fetch
@@ -58,6 +68,7 @@ export async function POST(req: NextRequest) {
         8000,
         (msg) => send({ type: 'log', message: msg }),
         (value) => send({ type: 'progress', value }),
+        (url) => send({ type: 'stream_url', url }),
       )
 
       // Kick off ethical analysis as soon as we have html1 (runs during AI analysis)
@@ -112,11 +123,14 @@ export async function POST(req: NextRequest) {
       const result = await analyzeSnapshot(snapshot)
 
       // ── Collect parallel results ─────────────────────────────────────────────
-      const [profileSettled, trustSettled, ethicsSettled] = await Promise.allSettled([
-        profilePromise,
-        trustPromise,
-        ethicsPromise,
-      ])
+      const [profileSettled, trustSettled, ethicsSettled, checkoutSettled, visualSettled] =
+        await Promise.allSettled([
+          profilePromise,
+          trustPromise,
+          ethicsPromise,
+          checkoutPromise,
+          visualPromise,
+        ])
 
       if (profileSettled.status === 'fulfilled') {
         result.profileComparison = profileSettled.value
@@ -126,6 +140,12 @@ export async function POST(req: NextRequest) {
       }
       if (ethicsSettled.status === 'fulfilled') {
         result.ethicalAnalysis = ethicsSettled.value
+      }
+      if (checkoutSettled.status === 'fulfilled') {
+        result.checkoutAnalysis = checkoutSettled.value
+      }
+      if (visualSettled.status === 'fulfilled') {
+        result.visualDarkPatterns = visualSettled.value
       }
 
       send({ type: 'progress', value: 100 })

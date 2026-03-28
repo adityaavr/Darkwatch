@@ -8,16 +8,20 @@ import { Badge } from '@/components/ui/badge'
 import { Card, CardContent } from '@/components/ui/card'
 import { Progress } from '@/components/ui/progress'
 import { Globe } from '@/components/globe'
-import type { ScanResult, DetectedPattern, ScanEvent, ProfileComparison, TrustScore, EthicalAnalysis, EthicalConcern } from '@/lib/types'
+import type { ScanResult, DetectedPattern, ScanEvent, ProfileComparison, TrustScore, EthicalAnalysis, EthicalConcern, CheckoutAnalysis, VisualDarkPatterns, VisualDarkPattern } from '@/lib/types'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
+
+type LogEntry = { time: string; text: string; level: 'info' | 'action' | 'warn' | 'success' }
 
 type ScanJob = {
   id: string
   url: string
+  productQuery: string
   status: 'scanning' | 'done' | 'error'
-  logs: string[]
+  logs: LogEntry[]
   progress: number
+  streamingUrl?: string
   result?: ScanResult
   error?: string
 }
@@ -38,6 +42,20 @@ const ACCENT = '#ff4757'
 const AMBER = '#f59e0b'
 const GREEN = '#10b981'
 const BLUE = '#3b82f6'
+
+const LOG_LEVEL_COLORS = { info: '#60a5fa', action: '#a78bfa', warn: '#ff4757', success: '#10b981' }
+const LOG_LEVEL_LABELS = { info: 'INFO', action: 'ACT ', warn: 'WARN', success: 'DONE' }
+
+function detectLogLevel(msg: string): LogEntry['level'] {
+  if (msg.includes('⚠') || msg.includes('Error') || msg.includes('DETECTED')) return 'warn'
+  if (msg.includes('complete') || msg.includes('Analysis complete') || msg.includes('✓')) return 'success'
+  if (msg.includes('[TinyFish]') || msg.includes('Navigating') || msg.includes('Searching') || msg.includes('Adding') || msg.includes('Proceeding')) return 'action'
+  return 'info'
+}
+
+function nowTime() {
+  return new Date().toLocaleTimeString('en-US', { hour12: false })
+}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -294,7 +312,12 @@ function BentoScanCard({
             {isScanning && <span className="w-2 h-2 rounded-full bg-[#ff4757] shrink-0 animate-ping" />}
             {isDone && <span className="w-2 h-2 rounded-full bg-[#10b981] shrink-0" />}
             {isError && <span className="w-2 h-2 rounded-full bg-[#ff4757] shrink-0" />}
-            <span className="text-sm font-mono text-[#111111] truncate">{getDomain(job.url)}</span>
+            <div className="min-w-0">
+              <span className="text-sm font-mono text-[#111111] truncate block">{getDomain(job.url)}</span>
+              {job.productQuery && (
+                <span className="text-[10px] text-[#9ca3af] truncate block">"{job.productQuery}"</span>
+              )}
+            </div>
           </div>
           {isDone && result && (
             <Badge
@@ -310,27 +333,45 @@ function BentoScanCard({
           {isScanning && <span className="text-[11px] text-[#6b7280] shrink-0">scanning…</span>}
         </div>
 
-        {/* Scanning: progress + live logs */}
+        {/* Scanning: progress + terminal log panel */}
         {isScanning && (
           <>
-            <div className="mb-3">
-              <Progress value={job.progress} className="h-1 bg-[rgba(0,0,0,0.06)]" />
+            <div className="mb-2">
+              <Progress value={job.progress} className="h-0.5 bg-[rgba(0,0,0,0.06)]" />
             </div>
-            <div className="min-h-[90px] space-y-1">
-              <AnimatePresence initial={false}>
-                {visibleLogs.map((log, i) => (
-                  <motion.div
-                    key={`${job.id}-${job.logs.length - visibleLogs.length + i}`}
-                    initial={{ opacity: 0, x: -4 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    transition={{ duration: 0.2 }}
-                    className="flex items-start gap-1.5"
-                  >
-                    <span className="text-[#6b7280] font-mono text-[10px] mt-px shrink-0">→</span>
-                    <span className="text-[10px] font-mono text-[#6b7280] leading-relaxed">{log}</span>
-                  </motion.div>
-                ))}
-              </AnimatePresence>
+            <div
+              className="rounded-lg overflow-hidden"
+              style={{ background: '#0d0d0d', border: '1px solid rgba(255,255,255,0.06)', minHeight: 100 }}
+            >
+              <div className="px-3 py-1.5 border-b border-[rgba(255,255,255,0.05)] flex items-center gap-1.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-[#ff4757] animate-pulse" />
+                <span className="text-[9px] font-mono text-[#374151] tracking-widest">AGENT LOG</span>
+              </div>
+              <div className="p-3 space-y-1.5">
+                <AnimatePresence initial={false}>
+                  {visibleLogs.map((log, i) => (
+                    <motion.div
+                      key={`${job.id}-${job.logs.length - visibleLogs.length + i}`}
+                      initial={{ opacity: 0, y: 4 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ duration: 0.18 }}
+                      className="flex items-start gap-2"
+                    >
+                      <span className="text-[#374151] font-mono text-[9px] shrink-0 mt-px">{log.time}</span>
+                      <span
+                        className="font-mono text-[9px] shrink-0 font-semibold"
+                        style={{ color: LOG_LEVEL_COLORS[log.level] }}
+                      >
+                        {LOG_LEVEL_LABELS[log.level]}
+                      </span>
+                      <span className="text-[10px] font-mono leading-relaxed" style={{ color: '#9ca3af' }}>{log.text}</span>
+                    </motion.div>
+                  ))}
+                </AnimatePresence>
+                {visibleLogs.length === 0 && (
+                  <span className="text-[9px] font-mono text-[#374151]">Initialising...</span>
+                )}
+              </div>
             </div>
           </>
         )}
@@ -720,6 +761,141 @@ function EthicalAnalysisSection({ data }: { data: EthicalAnalysis }) {
   )
 }
 
+// ── TinyFish Badge ────────────────────────────────────────────────────────────
+
+function TinyFishBadge() {
+  return (
+    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-mono bg-[#f0f9ff] text-[#0369a1] border border-[#bae6fd]">
+      ⚡ TinyFish
+    </span>
+  )
+}
+
+// ── Checkout Analysis Section ─────────────────────────────────────────────────
+
+function CheckoutAnalysisSection({ data }: { data: CheckoutAnalysis }) {
+  return (
+    <div>
+      <h3 className="text-xs font-semibold text-[#6b7280] uppercase tracking-wide mb-3 flex items-center gap-2">
+        Checkout analysis <TinyFishBadge />
+      </h3>
+
+      {data.hiddenFeesDetected && (
+        <div
+          className="flex items-start gap-2 rounded-lg px-3 py-2.5 mb-3 text-sm"
+          style={{ backgroundColor: ACCENT + '12', border: `1px solid ${ACCENT}30` }}
+        >
+          <span style={{ color: ACCENT }} className="shrink-0 mt-px">⚠</span>
+          <span className="text-[#111111] text-xs leading-relaxed">
+            <strong>Hidden fees detected</strong> — product shows {data.productPrice} but checkout total is {data.checkoutTotal}.
+          </span>
+        </div>
+      )}
+
+      <Card className="bg-white border-[rgba(0,0,0,0.08)] shadow-none overflow-hidden">
+        <div className="divide-y divide-[rgba(0,0,0,0.06)]">
+          {/* Price row */}
+          <div className="grid grid-cols-2 px-4 py-3 bg-[#fafaf8]">
+            <div>
+              <div className="text-[10px] text-[#6b7280] uppercase tracking-wide mb-0.5">Product price</div>
+              <div className="text-sm font-mono font-semibold text-[#111111]">{data.productPrice || '—'}</div>
+            </div>
+            <div>
+              <div className="text-[10px] text-[#6b7280] uppercase tracking-wide mb-0.5">Checkout total</div>
+              <div
+                className="text-sm font-mono font-semibold"
+                style={{ color: data.hiddenFeesDetected ? ACCENT : GREEN }}
+              >
+                {data.checkoutTotal || '—'}
+              </div>
+            </div>
+          </div>
+
+          {/* Fees */}
+          {data.fees.length > 0 && data.fees.map((fee, i) => (
+            <div key={i} className="grid grid-cols-2 px-4 py-2.5 items-center">
+              <span className="text-xs text-[#374151]">{fee.name}</span>
+              <span className="text-xs font-mono text-[#6b7280]">{fee.amount}</span>
+            </div>
+          ))}
+
+          {/* Pre-checked items */}
+          {data.preCheckedItems.length > 0 && (
+            <div className="px-4 py-3">
+              <div className="text-[10px] text-[#6b7280] uppercase tracking-wide mb-2">Pre-checked add-ons</div>
+              <div className="space-y-1">
+                {data.preCheckedItems.map((item, i) => (
+                  <div key={i} className="flex items-center gap-1.5 text-xs" style={{ color: AMBER }}>
+                    <span>⚠</span>
+                    <span>{item}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Auto-renewal */}
+          {data.hasAutoRenewal && (
+            <div className="px-4 py-2.5 flex items-center gap-2">
+              <span style={{ color: ACCENT }} className="text-xs">⚠</span>
+              <span className="text-xs font-medium" style={{ color: ACCENT }}>Auto-renewal subscription detected</span>
+            </div>
+          )}
+        </div>
+      </Card>
+
+      {data.summary && (
+        <p className="text-xs text-[#6b7280] mt-2">{data.summary}</p>
+      )}
+    </div>
+  )
+}
+
+// ── Visual Dark Patterns Section ──────────────────────────────────────────────
+
+function VisualDarkPatternsSection({ data }: { data: VisualDarkPatterns }) {
+  if (!data.visualPatterns || data.visualPatterns.length === 0) return null
+
+  return (
+    <div>
+      <h3 className="text-xs font-semibold text-[#6b7280] uppercase tracking-wide mb-3 flex items-center gap-2">
+        Visual patterns <TinyFishBadge />
+      </h3>
+
+      {data.screenshotObservations && (
+        <p className="text-xs text-[#6b7280] mb-3 leading-relaxed">{data.screenshotObservations}</p>
+      )}
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+        {data.visualPatterns.map((p: VisualDarkPattern, i: number) => {
+          const sc = getSeverityColor(p.severity)
+          return (
+            <Card key={i} className="bg-white border-[rgba(0,0,0,0.08)] shadow-none">
+              <CardContent className="p-3">
+                <div className="flex items-start gap-2 mb-1.5">
+                  <span className="text-base shrink-0">👁</span>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-xs font-semibold text-[#111111]">{p.type}</span>
+                      <Badge
+                        className="text-[9px] px-1.5 py-0 border-0 font-semibold"
+                        style={{ backgroundColor: sc + '18', color: sc }}
+                      >
+                        {p.severity}
+                      </Badge>
+                    </div>
+                  </div>
+                </div>
+                <p className="text-[11px] text-[#6b7280] leading-relaxed pl-6">{p.description}</p>
+              </CardContent>
+            </Card>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 // ── Result Detail ─────────────────────────────────────────────────────────────
 
 function ResultDetail({ job }: { job: ScanJob }) {
@@ -774,16 +950,26 @@ function ResultDetail({ job }: { job: ScanJob }) {
         <h3 className="text-xs font-semibold text-[#6b7280] uppercase tracking-wide mb-2">
           Agent trace
         </h3>
-        <Card className="bg-[#fafaf8] border-[rgba(0,0,0,0.08)] shadow-none">
-          <CardContent className="p-4 space-y-1">
+        <div className="rounded-xl overflow-hidden" style={{ background: '#0d0d0d', border: '1px solid rgba(255,255,255,0.06)' }}>
+          <div className="px-4 py-2 border-b border-[rgba(255,255,255,0.05)] flex items-center gap-2">
+            <span className="w-1.5 h-1.5 rounded-full bg-[#10b981]" />
+            <span className="text-[9px] font-mono text-[#374151] tracking-widest">COMPLETED · {job.logs.length} EVENTS</span>
+          </div>
+          <div className="p-4 space-y-2 max-h-64 overflow-y-auto">
             {job.logs.map((log, i) => (
               <div key={i} className="flex items-start gap-2">
-                <span className="text-[#6b7280] font-mono text-[11px] mt-px shrink-0">→</span>
-                <span className="text-[11px] font-mono text-[#6b7280]">{log}</span>
+                <span className="text-[#374151] font-mono text-[10px] shrink-0 mt-px">{log.time}</span>
+                <span
+                  className="font-mono text-[10px] shrink-0 font-semibold"
+                  style={{ color: LOG_LEVEL_COLORS[log.level] }}
+                >
+                  {LOG_LEVEL_LABELS[log.level]}
+                </span>
+                <span className="text-[11px] font-mono leading-relaxed" style={{ color: '#9ca3af' }}>{log.text}</span>
               </div>
             ))}
-          </CardContent>
-        </Card>
+          </div>
+        </div>
       </div>
 
       {/* Stat cards */}
@@ -834,6 +1020,12 @@ function ResultDetail({ job }: { job: ScanJob }) {
 
       {/* Price comparison */}
       {result.profileComparison && <PriceComparisonSection data={result.profileComparison} />}
+
+      {/* Checkout analysis */}
+      {result.checkoutAnalysis && <CheckoutAnalysisSection data={result.checkoutAnalysis} />}
+
+      {/* Visual dark patterns */}
+      {result.visualDarkPatterns && <VisualDarkPatternsSection data={result.visualDarkPatterns} />}
     </div>
   )
 }
@@ -843,6 +1035,7 @@ function ResultDetail({ job }: { job: ScanJob }) {
 export default function Page() {
   const [jobs, setJobs] = useState<ScanJob[]>([])
   const [urlInput, setUrlInput] = useState('')
+  const [productQuery, setProductQuery] = useState('')
   const [urlError, setUrlError] = useState('')
   const [liveFeedIndex, setLiveFeedIndex] = useState(0)
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null)
@@ -864,7 +1057,7 @@ export default function Page() {
         const res = await fetch('/api/scan', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ url: job.url }),
+          body: JSON.stringify({ url: job.url, productQuery: job.productQuery }),
         })
 
         if (!res.ok || !res.body) {
@@ -893,14 +1086,19 @@ export default function Page() {
             try {
               const event = JSON.parse(line.slice(6)) as ScanEvent
               if (event.type === 'log') {
+                const entry: LogEntry = { time: nowTime(), text: event.message, level: detectLogLevel(event.message) }
                 setJobs((prev) =>
                   prev.map((j) =>
-                    j.id === job.id ? { ...j, logs: [...j.logs, event.message] } : j,
+                    j.id === job.id ? { ...j, logs: [...j.logs, entry] } : j,
                   ),
                 )
               } else if (event.type === 'progress') {
                 setJobs((prev) =>
                   prev.map((j) => (j.id === job.id ? { ...j, progress: event.value } : j)),
+                )
+              } else if (event.type === 'stream_url') {
+                setJobs((prev) =>
+                  prev.map((j) => (j.id === job.id ? { ...j, streamingUrl: event.url } : j)),
                 )
               } else if (event.type === 'result') {
                 setJobs((prev) =>
@@ -954,18 +1152,20 @@ export default function Page() {
     const job: ScanJob = {
       id: crypto.randomUUID(),
       url: normalized,
+      productQuery: productQuery.trim(),
       status: 'scanning',
       logs: [],
       progress: 0,
     }
     setJobs((prev) => [...prev, job])
     startScan(job)
-  }, [urlInput, startScan])
+  }, [urlInput, productQuery, startScan])
 
   const handleClear = () => {
     setJobs([])
     setSelectedJobId(null)
     setUrlInput('')
+    setProductQuery('')
     setUrlError('')
   }
 
@@ -1033,6 +1233,13 @@ export default function Page() {
                   Scan
                 </Button>
               </div>
+              <Input
+                placeholder="What are you looking for? e.g. Kindle case, running shoes (optional)"
+                value={productQuery}
+                onChange={(e) => setProductQuery(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleScan()}
+                className="bg-white border-[rgba(0,0,0,0.15)] text-[#111111] placeholder:text-[#9ca3af] focus:border-[#111111] mb-2 text-sm"
+              />
               {urlError && <p className="text-xs text-[#ff4757] ml-1">{urlError}</p>}
             </div>
           </div>
@@ -1149,6 +1356,35 @@ export default function Page() {
                   />
                 ))}
               </div>
+
+              {/* Live browser panel — appears when TinyFish streaming URL arrives */}
+              <AnimatePresence>
+                {jobs.some((j) => j.status === 'scanning' && j.streamingUrl) && (() => {
+                  const activeStreamUrl = jobs.find((j) => j.status === 'scanning' && j.streamingUrl)?.streamingUrl
+                  return activeStreamUrl ? (
+                    <motion.div
+                      key="live-browser"
+                      initial={{ opacity: 0, height: 0 }}
+                      animate={{ opacity: 1, height: 480 }}
+                      exit={{ opacity: 0, height: 0 }}
+                      transition={{ duration: 0.4, ease: 'easeOut' }}
+                      className="mt-4 rounded-xl overflow-hidden border border-[rgba(0,0,0,0.08)] bg-[#0a0a0a]"
+                    >
+                      <div className="flex items-center gap-2 px-4 py-2 border-b border-[rgba(255,255,255,0.06)]">
+                        <span className="w-2 h-2 rounded-full bg-[#10b981]" style={{ boxShadow: '0 0 6px #10b981' }} />
+                        <span className="text-[10px] font-mono text-[#4b5563] tracking-widest">LIVE BROWSER · AGENT CONTROLLED</span>
+                      </div>
+                      <iframe
+                        src={activeStreamUrl}
+                        className="w-full"
+                        style={{ height: 446, border: 'none', display: 'block' }}
+                        title="TinyFish live browser"
+                        sandbox="allow-scripts allow-same-origin allow-forms"
+                      />
+                    </motion.div>
+                  ) : null
+                })()}
+              </AnimatePresence>
 
               {/* Detail panel */}
               <AnimatePresence>

@@ -52,6 +52,27 @@ export type EthicalAnalysis = {
   pages_checked: string[]  // which policy pages were successfully fetched
 }
 
+export type CheckoutAnalysis = {
+  productPrice: string
+  checkoutTotal: string
+  fees: { name: string; amount: string }[]
+  preCheckedItems: string[]
+  hasAutoRenewal: boolean
+  hiddenFeesDetected: boolean
+  summary: string
+}
+
+export type VisualDarkPattern = {
+  type: string
+  description: string
+  severity: 'critical' | 'medium' | 'low'
+}
+
+export type VisualDarkPatterns = {
+  visualPatterns: VisualDarkPattern[]
+  screenshotObservations: string
+}
+
 export type ScanResult = {
   risk_score: number
   verdict: string
@@ -59,10 +80,37 @@ export type ScanResult = {
   profileComparison?: ProfileComparison
   trustScore?: TrustScore
   ethicalAnalysis?: EthicalAnalysis
+  checkoutAnalysis?: CheckoutAnalysis
+  visualDarkPatterns?: VisualDarkPatterns
 }
 
 export type ScanEvent =
   | { type: 'log'; message: string }
   | { type: 'progress'; value: number }
+  | { type: 'stream_url'; url: string }
   | { type: 'result'; data: ScanResult }
+  | { type: 'error'; message: string }
+
+// ── Cart Cleanser (v3) ────────────────────────────────────────────────────────
+
+export type FeeItem = {
+  name: string
+  amount: string
+  stripped: boolean
+}
+
+export type CartResult = {
+  productName: string
+  basePrice: string
+  originalCartTotal: string
+  sanitizedTotal: string
+  feesStripped: FeeItem[]
+  savings: string
+  success: boolean
+}
+
+export type CleanCartEvent =
+  | { type: 'log'; message: string; level: 'info' | 'warn' | 'action' | 'vision' | 'success' }
+  | { type: 'stream_url'; url: string }
+  | { type: 'result'; data: CartResult }
   | { type: 'error'; message: string }
