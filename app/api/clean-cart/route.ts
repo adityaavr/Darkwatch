@@ -2,9 +2,17 @@ import { NextRequest } from 'next/server'
 import { cleanCart } from '@/lib/tinyfish-service'
 import type { CleanCartEvent } from '@/lib/types'
 
-export async function POST(req: NextRequest) {
-  const { query } = await req.json()
+export const maxDuration = 300
 
+export async function POST(req: NextRequest) {
+  const { url, query } = await req.json()
+
+  if (!url || typeof url !== 'string') {
+    return new Response(JSON.stringify({ error: 'url is required' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    })
+  }
   if (!query || typeof query !== 'string' || !query.trim()) {
     return new Response(JSON.stringify({ error: 'query is required' }), {
       status: 400,
@@ -23,9 +31,10 @@ export async function POST(req: NextRequest) {
   ;(async () => {
     try {
       const result = await cleanCart(
+        url.trim(),
         query.trim(),
         (message, level) => send({ type: 'log', message, level }),
-        (url) => send({ type: 'stream_url', url }),
+        (streamUrl) => send({ type: 'stream_url', url: streamUrl }),
       )
       send({ type: 'result', data: result })
     } catch (err) {

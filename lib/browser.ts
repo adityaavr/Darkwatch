@@ -1,7 +1,7 @@
 // ── Browser Provider ──────────────────────────────────────────────────────────
 const USE_TINYFISH = true
 
-import { TinyFish } from '@tiny-fish/sdk'
+import { TinyFish, BrowserProfile } from '@tiny-fish/sdk'
 import type { ProfileComparison, ProfileResult, CheckoutAnalysis, VisualDarkPatterns } from './types'
 
 // ── Rotating user agents ──────────────────────────────────────────────────────
@@ -282,35 +282,45 @@ export async function getVisualDarkPatterns(
   url: string,
   onLog: (msg: string) => void,
 ): Promise<VisualDarkPatterns> {
-  onLog('[TinyFish] Taking screenshot for visual dark pattern analysis...')
+  onLog('[TinyFish] Scanning page visually and capturing evidence screenshots...')
   const client = new TinyFish()
   const stream = await client.agent.stream({
     url,
-    goal: `Visually analyse this page for dark patterns. Look for:
-1. Cookie consent manipulation (tiny or greyed-out "reject all" button, hidden decline option)
-2. Pre-checked checkboxes for newsletters, insurance, or paid add-ons
-3. Misleading visual hierarchy (giant "confirm" vs microscopic "cancel" or "no thanks")
-4. Fake progress bars or urgency indicators designed to pressure the user
-5. Confusing button colours where the site-preferred action is over-emphasised
-6. Any other visual trickery that makes manipulation harder to notice
+    goal: `Visually analyse this page for dark patterns. For each dark pattern you find:
+1. Scroll to make the manipulative element fully visible in the viewport
+2. Take a screenshot focused on that element as visual proof
+3. Encode the screenshot as a base64 data URI string
 
-Return JSON:
+Look specifically for:
+- Cookie consent manipulation (tiny/greyed "reject" button, hidden decline)
+- Pre-checked checkboxes for insurance, newsletters, or paid add-ons
+- Misleading visual hierarchy (huge "confirm" vs microscopic "cancel")
+- Fake countdown timers or urgency banners
+- Confusing button colour tricks where the expensive/bad option is over-emphasised
+- Any visual trickery that makes manipulation hard to notice
+
+Return JSON exactly:
 {
   "visualPatterns": [
     {
       "type": "short name for the pattern",
-      "description": "what you observe on the page",
-      "severity": "critical" | "medium" | "low"
+      "description": "what you observe — be specific about colours, positions, and wording",
+      "severity": "critical" | "medium" | "low",
+      "evidenceScreenshot": "data:image/png;base64,<base64 encoded screenshot of this specific element>"
     }
   ],
   "screenshotObservations": "1-2 sentence overall summary of visual manipulation level"
-}`,
+}
+
+If you cannot capture a screenshot for a pattern, omit the evidenceScreenshot field for that pattern.`,
+    browser_profile: BrowserProfile.STEALTH,
   })
   for await (const event of stream) {
     if (event.type === 'COMPLETE') {
       const result = event.result as VisualDarkPatterns
       const count = result.visualPatterns?.length ?? 0
-      onLog(`Visual scan complete — ${count} visual pattern(s) detected`)
+      const withScreenshots = result.visualPatterns?.filter(p => p.evidenceScreenshot).length ?? 0
+      onLog(`Visual scan complete — ${count} pattern(s) detected, ${withScreenshots} with screenshots`)
       return result
     }
   }

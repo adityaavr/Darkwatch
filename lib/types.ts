@@ -8,7 +8,7 @@ export type PageSnapshot = {
   scarcity: string[]
   prices: string[]
   cta_text: string[]
-  element_snippets: string[]  // raw HTML elements likely to contain dark patterns
+  element_snippets: string[]
 }
 
 export type DetectedPattern = {
@@ -16,7 +16,8 @@ export type DetectedPattern = {
   severity: 'critical' | 'medium' | 'low'
   evidence: string
   explanation: string
-  element_html?: string   // actual HTML element from the page containing the evidence
+  element_html?: string
+  evidenceScreenshot?: string   // base64 data URI captured by TinyFish
 }
 
 export type ProfileResult = {
@@ -42,14 +43,14 @@ export type TrustScore = {
 export type EthicalConcern = {
   category: 'Data Privacy' | 'Environmental' | 'Labor Practices' | 'Business Practices' | 'Transparency' | 'Consumer Rights'
   severity: 'high' | 'medium' | 'low'
-  concern: string       // one-line title
-  evidence: string      // specific evidence or reasoning
+  concern: string
+  evidence: string
 }
 
 export type EthicalAnalysis = {
   overall: 'concerning' | 'mixed' | 'acceptable' | 'good'
   concerns: EthicalConcern[]
-  pages_checked: string[]  // which policy pages were successfully fetched
+  pages_checked: string[]
 }
 
 export type CheckoutAnalysis = {
@@ -66,11 +67,26 @@ export type VisualDarkPattern = {
   type: string
   description: string
   severity: 'critical' | 'medium' | 'low'
+  evidenceScreenshot?: string   // base64 data URI of the element captured by TinyFish
 }
 
 export type VisualDarkPatterns = {
   visualPatterns: VisualDarkPattern[]
   screenshotObservations: string
+}
+
+// ── Action recommendation ─────────────────────────────────────────────────────
+
+export type ActionVerdict = 'safe' | 'sketchy' | 'skip'
+
+export type ActionRecommendation = {
+  verdict: ActionVerdict
+  headline: string                 // e.g. "540% markup on a $2 AliExpress product"
+  topFindings: string[]            // 2-3 bullet points
+  ctaLabel: string                 // e.g. "Buy direct for $2.50 →"
+  ctaUrl?: string                  // e.g. AliExpress search URL
+  ctaSubtext?: string              // e.g. "AliExpress · ships to your region"
+  evidenceScreenshot?: string      // the single most compelling screenshot
 }
 
 export type ScanResult = {
@@ -82,6 +98,7 @@ export type ScanResult = {
   ethicalAnalysis?: EthicalAnalysis
   checkoutAnalysis?: CheckoutAnalysis
   visualDarkPatterns?: VisualDarkPatterns
+  actionRecommendation?: ActionRecommendation
 }
 
 export type ScanEvent =
@@ -91,26 +108,34 @@ export type ScanEvent =
   | { type: 'result'; data: ScanResult }
   | { type: 'error'; message: string }
 
-// ── Cart Cleanser (v3) ────────────────────────────────────────────────────────
+// ── Cart Cleanser / Sanitization ─────────────────────────────────────────────
 
-export type FeeItem = {
+export type JunkFee = {
   name: string
   amount: string
-  stripped: boolean
+  description: string
 }
 
-export type CartResult = {
-  productName: string
+export type ProductOrigin = {
+  isDropshipped: boolean
+  wholesalePriceEstimate: string
+  markupPercentage: string
+  likelySourcedFrom: string
+  analysis: string
+}
+
+export type SanitizationResult = {
   basePrice: string
-  originalCartTotal: string
-  sanitizedTotal: string
-  feesStripped: FeeItem[]
-  savings: string
-  success: boolean
+  junkFeesRemoved: JunkFee[]
+  finalPrice: string
+  screenshotUrl?: string
+  trustScore?: number
+  fakeReviewsDetected?: boolean
+  productOrigin?: ProductOrigin
 }
 
 export type CleanCartEvent =
   | { type: 'log'; message: string; level: 'info' | 'warn' | 'action' | 'vision' | 'success' }
   | { type: 'stream_url'; url: string }
-  | { type: 'result'; data: CartResult }
+  | { type: 'result'; data: SanitizationResult }
   | { type: 'error'; message: string }

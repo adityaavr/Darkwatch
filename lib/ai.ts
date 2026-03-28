@@ -1,6 +1,8 @@
 import { GoogleGenerativeAI } from '@google/generative-ai'
 import OpenAI from 'openai'
-import type { PageSnapshot, ScanResult, TrustScore, EthicalAnalysis } from './types'
+import { generateText } from 'ai'
+import { openai as openaiSDK } from '@ai-sdk/openai'
+import type { PageSnapshot, ScanResult, TrustScore, EthicalAnalysis, ActionRecommendation } from './types'
 import { fetchPagePlain, getRedditSentiment } from './browser'
 
 // ── AI Provider ───────────────────────────────────────────────────────────────
@@ -191,22 +193,21 @@ export async function analyzeSnapshot(snapshot: PageSnapshot): Promise<ScanResul
   return analyzeWithGemini(snapshot)
 }
 
-// ── OpenAI GPT-4o ─────────────────────────────────────────────────────────────
+// ── OpenAI GPT-4o via Vercel AI SDK ──────────────────────────────────────────
 
 async function analyzeWithOpenAI(snapshot: PageSnapshot): Promise<ScanResult> {
-  const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
-
-  const response = await openai.chat.completions.create({
-    model: 'gpt-4o',
-    messages: [
-      { role: 'system', content: PROMPT },
-      { role: 'user', content: buildDataContext(snapshot) },
-    ],
-    response_format: { type: 'json_object' },
+  const { text } = await generateText({
+    model: openaiSDK('gpt-4o-mini'),
+    system: PROMPT,
+    prompt: buildDataContext(snapshot),
     temperature: 0.1,
   })
 
-  return JSON.parse(response.choices[0].message.content!) as ScanResult
+  try {
+    return JSON.parse(text.replace(/```json|```/g, '').trim()) as ScanResult
+  } catch {
+    return { risk_score: 0, verdict: 'clean', patterns: [] }
+  }
 }
 
 // ── Gemini (fallback) ─────────────────────────────────────────────────────────
@@ -387,4 +388,74 @@ Return ONLY valid JSON — no markdown, no backticks:
 
   onLog(`Ethical analysis: ${parsed.overall} — ${parsed.concerns.length} concern(s) found`)
   return { ...parsed, pages_checked }
+}
+
+// ── Action recommendation ─────────────────────────────────────────────────────
+
+export async function getActionRecommendation(
+  url: string,
+  productQuery: string,
+  scanResult: ScanResult,
+  onLog: (msg: string) => void,
+): Promise<ActionRecommendation> {
+  onLog('Building action recommendation...')
+
+  const origin = scanResult.checkoutAnalysis
+  const checkout = scanResult.checkoutAnalysis
+  const trust = scanResult.trustScore
+  const patterns = scanResult.patterns
+  const visual = scanResult.visualDarkPatterns
+
+  const domain = (() => { try { return new URL(url).hostname.replace('www.', '') } catch { return url } })()
+
+  const context = `
+Site: ${domain}
+Product searched: "${productQuery || 'unspecified'}"
+Risk score: ${scanResult.risk_score}/100
+Trust verdict: ${trust?.verdict ?? 'unknown'}
+Critical patterns detected: ${patterns.filter(p => p.severity === 'critical').map(p => p.pattern).join(', ') || 'none'}
+Hidden fees: ${checkout?.hiddenFeesDetected ? `yes — product ${checkout.productPrice} vs checkout ${checkout.checkoutTotal}` : 'none detected'}
+Pre-checked add-ons: ${checkout?.preCheckedItems.join(', ') || 'none'}
+Trust signals: ${trust?.signals.slice(0, 2).join(' | ') || 'none'}
+Visual patterns: ${visual?.visualPatterns.slice(0, 2).map(p => p.type).join(', ') || 'none'}
+`.trim()
+
+  const prompt = `You are DarkWatch, an AI shopping bodyguard. Based on this scan, decide the ONE action the user should take.
+
+${context}
+
+Rules:
+- If the site is fundamentally untrustworthy or the product is heavily marked up from a wholesale source → verdict "skip", recommend buying from a competitor or direct source
+- If trust is OK but there are junk fees or pre-checked add-ons → verdict "sketchy", recommend stripping fees
+- If everything looks fine → verdict "safe", confirm it's safe to buy
+
+Build a competitor/direct URL only if you have strong confidence it exists. Use a real search URL like https://www.amazon.com/s?k=<query> or https://www.aliexpress.com/w/wholesale-<query>.html using the product query.
+
+Return ONLY valid JSON:
+{
+  "verdict": "safe" | "sketchy" | "skip",
+  "headline": "one punchy finding, max 50 chars, e.g. '540% markup on a $2 product'",
+  "topFindings": ["2-3 short bullet strings, each under 60 chars"],
+  "ctaLabel": "action button text, e.g. 'Buy direct for $2.50 →' or 'Strip $9.98 in fees →' or 'Safe to checkout →'",
+  "ctaUrl": "full URL or null",
+  "ctaSubtext": "one line of context under the button, e.g. 'Amazon · usually ships in 2 days'"
+}`
+
+  const { text } = await generateText({
+    model: openaiSDK('gpt-4o-mini'),
+    prompt,
+    temperature: 0.2,
+  })
+
+  const parsed = JSON.parse(text.replace(/```json|```/g, '').trim()) as ActionRecommendation
+
+  // Attach the most compelling screenshot if we have one
+  const topScreenshot =
+    visual?.visualPatterns.find(p => p.evidenceScreenshot && p.severity === 'critical')?.evidenceScreenshot ??
+    visual?.visualPatterns.find(p => p.evidenceScreenshot)?.evidenceScreenshot
+
+  if (topScreenshot) parsed.evidenceScreenshot = topScreenshot
+
+  onLog(`Verdict: ${parsed.verdict.toUpperCase()} — ${parsed.headline}`)
+  return parsed
 }

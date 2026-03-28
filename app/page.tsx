@@ -8,7 +8,7 @@ import { Badge } from '@/components/ui/badge'
 import { Card, CardContent } from '@/components/ui/card'
 import { Progress } from '@/components/ui/progress'
 import { Globe } from '@/components/globe'
-import type { ScanResult, DetectedPattern, ScanEvent, ProfileComparison, TrustScore, EthicalAnalysis, EthicalConcern, CheckoutAnalysis, VisualDarkPatterns, VisualDarkPattern } from '@/lib/types'
+import type { ScanResult, DetectedPattern, ScanEvent, ProfileComparison, TrustScore, EthicalAnalysis, EthicalConcern, CheckoutAnalysis, VisualDarkPatterns, VisualDarkPattern, ActionRecommendation } from '@/lib/types'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -870,7 +870,15 @@ function VisualDarkPatternsSection({ data }: { data: VisualDarkPatterns }) {
         {data.visualPatterns.map((p: VisualDarkPattern, i: number) => {
           const sc = getSeverityColor(p.severity)
           return (
-            <Card key={i} className="bg-white border-[rgba(0,0,0,0.08)] shadow-none">
+            <Card key={i} className="bg-white border-[rgba(0,0,0,0.08)] shadow-none overflow-hidden">
+              {p.evidenceScreenshot && (
+                <img
+                  src={p.evidenceScreenshot}
+                  alt={`Evidence: ${p.type}`}
+                  className="w-full object-cover border-b border-[rgba(0,0,0,0.06)]"
+                  style={{ maxHeight: 180 }}
+                />
+              )}
               <CardContent className="p-3">
                 <div className="flex items-start gap-2 mb-1.5">
                   <span className="text-base shrink-0">👁</span>
@@ -896,136 +904,182 @@ function VisualDarkPatternsSection({ data }: { data: VisualDarkPatterns }) {
   )
 }
 
+// ── Action Card ───────────────────────────────────────────────────────────────
+
+const VERDICT_CONFIG = {
+  safe:    { icon: '✅', label: 'SAFE TO BUY',  bg: '#d1fae5', color: '#065f46', border: '#6ee7b7' },
+  sketchy: { icon: '⚠️', label: 'SKETCHY',      bg: '#fef3c7', color: '#92400e', border: '#fcd34d' },
+  skip:    { icon: '🚨', label: 'SKIP THIS',    bg: '#fee2e2', color: '#991b1b', border: '#fca5a5' },
+}
+
+function ActionCard({ rec, job }: { rec: ActionRecommendation; job: ScanJob }) {
+  const cfg = VERDICT_CONFIG[rec.verdict]
+
+  return (
+    <div className="rounded-2xl overflow-hidden border" style={{ borderColor: cfg.border }}>
+      {/* Verdict header */}
+      <div className="px-5 py-4 flex items-center gap-3" style={{ background: cfg.bg }}>
+        <span className="text-2xl">{cfg.icon}</span>
+        <div>
+          <div className="text-xs font-bold tracking-widest" style={{ color: cfg.color }}>{cfg.label}</div>
+          <div className="text-sm font-bold text-[#111111] mt-0.5">{rec.headline}</div>
+        </div>
+      </div>
+
+      {/* Evidence screenshot */}
+      {rec.evidenceScreenshot && (
+        <div className="border-t border-b" style={{ borderColor: cfg.border }}>
+          <img
+            src={rec.evidenceScreenshot}
+            alt="Evidence screenshot"
+            className="w-full object-cover"
+            style={{ maxHeight: 220 }}
+          />
+          <div className="px-4 py-1.5 bg-[#fafaf8]">
+            <span className="text-[9px] font-mono text-[#9ca3af] uppercase tracking-widest">
+              📸 captured by TinyFish agent · {getDomain(job.url)}
+            </span>
+          </div>
+        </div>
+      )}
+
+      {/* Findings */}
+      <div className="px-5 py-4 bg-white space-y-2">
+        {rec.topFindings.map((f, i) => (
+          <div key={i} className="flex items-start gap-2 text-sm text-[#374151]">
+            <span className="mt-1 shrink-0" style={{ color: cfg.color }}>•</span>
+            <span>{f}</span>
+          </div>
+        ))}
+      </div>
+
+      {/* CTA */}
+      <div className="px-5 pb-5 bg-white">
+        {rec.ctaUrl ? (
+          <a
+            href={rec.ctaUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="block w-full text-center py-3 px-4 rounded-xl font-bold text-sm transition-opacity hover:opacity-90"
+            style={{ background: cfg.color, color: '#fff' }}
+          >
+            {rec.ctaLabel}
+          </a>
+        ) : (
+          <button
+            className="block w-full text-center py-3 px-4 rounded-xl font-bold text-sm"
+            style={{ background: cfg.color, color: '#fff' }}
+          >
+            {rec.ctaLabel}
+          </button>
+        )}
+        {rec.ctaSubtext && (
+          <p className="text-center text-[11px] text-[#9ca3af] mt-2">{rec.ctaSubtext}</p>
+        )}
+      </div>
+    </div>
+  )
+}
+
 // ── Result Detail ─────────────────────────────────────────────────────────────
 
 function ResultDetail({ job }: { job: ScanJob }) {
   const result = job.result!
+  const [showFullAnalysis, setShowFullAnalysis] = useState(false)
   const color = getRiskColor(result.risk_score)
   const critical = result.patterns.filter((p) => p.severity === 'critical').length
   const medium = result.patterns.filter((p) => p.severity === 'medium').length
   const low = result.patterns.filter((p) => p.severity === 'low').length
 
   return (
-    <div className="space-y-6">
-      {/* Hero row — risk gauge + optional trust gauge + verdict */}
-      <div className="flex flex-col sm:flex-row gap-6 items-start">
-        <div className="flex gap-3 items-end shrink-0">
-          <ArcGauge score={result.risk_score} size="lg" label="RISK" />
+    <div className="space-y-4">
+      {/* ── ACTION CARD — the primary result ── */}
+      {result.actionRecommendation ? (
+        <ActionCard rec={result.actionRecommendation} job={job} />
+      ) : (
+        /* Fallback if recommendation not yet ready */
+        <div className="flex items-center gap-3 px-5 py-4 rounded-2xl border border-[rgba(0,0,0,0.08)] bg-white">
+          <ArcGauge score={result.risk_score} size="sm" label="RISK" />
           {result.trustScore && (
-            <ArcGauge
-              score={result.trustScore.trust_score}
-              size="sm"
-              colorFn={getTrustColor}
-              label="TRUST"
-            />
+            <ArcGauge score={result.trustScore.trust_score} size="sm" colorFn={getTrustColor} label="TRUST" />
           )}
-        </div>
-        <div className="flex-1 pt-2">
-          <div className="flex items-center gap-2 mb-2">
-            <Badge
-              className="text-sm font-bold px-3 py-1 border-0"
-              style={{ backgroundColor: color + '18', color }}
-            >
+          <div>
+            <Badge className="text-sm font-bold px-3 py-1 border-0 mb-1" style={{ backgroundColor: color + '18', color }}>
               {result.verdict.toUpperCase()}
             </Badge>
-          </div>
-          <p className="text-[#6b7280] text-sm font-mono mb-2">{getDomain(job.url)}</p>
-          <p className="text-[#111111] text-sm">
-            {result.patterns.length > 0 ? (
-              <>
-                <span className="font-bold" style={{ color: ACCENT }}>
-                  {result.patterns.length}
-                </span>{' '}
-                dark pattern{result.patterns.length !== 1 ? 's' : ''} detected.
-              </>
-            ) : (
-              'No dark patterns detected — this site appears clean.'
-            )}
-          </p>
-        </div>
-      </div>
-
-      {/* Agent trace */}
-      <div>
-        <h3 className="text-xs font-semibold text-[#6b7280] uppercase tracking-wide mb-2">
-          Agent trace
-        </h3>
-        <div className="rounded-xl overflow-hidden" style={{ background: '#0d0d0d', border: '1px solid rgba(255,255,255,0.06)' }}>
-          <div className="px-4 py-2 border-b border-[rgba(255,255,255,0.05)] flex items-center gap-2">
-            <span className="w-1.5 h-1.5 rounded-full bg-[#10b981]" />
-            <span className="text-[9px] font-mono text-[#374151] tracking-widest">COMPLETED · {job.logs.length} EVENTS</span>
-          </div>
-          <div className="p-4 space-y-2 max-h-64 overflow-y-auto">
-            {job.logs.map((log, i) => (
-              <div key={i} className="flex items-start gap-2">
-                <span className="text-[#374151] font-mono text-[10px] shrink-0 mt-px">{log.time}</span>
-                <span
-                  className="font-mono text-[10px] shrink-0 font-semibold"
-                  style={{ color: LOG_LEVEL_COLORS[log.level] }}
-                >
-                  {LOG_LEVEL_LABELS[log.level]}
-                </span>
-                <span className="text-[11px] font-mono leading-relaxed" style={{ color: '#9ca3af' }}>{log.text}</span>
-              </div>
-            ))}
+            <p className="text-xs text-[#6b7280]">
+              {result.patterns.length} pattern{result.patterns.length !== 1 ? 's' : ''} detected
+            </p>
           </div>
         </div>
-      </div>
-
-      {/* Stat cards */}
-      <div className="grid grid-cols-3 gap-3">
-        {[
-          { label: 'Critical', count: critical, color: ACCENT },
-          { label: 'Medium', count: medium, color: AMBER },
-          { label: 'Low', count: low, color: BLUE },
-        ].map(({ label, count, color: c }) => (
-          <Card key={label} className="bg-white border-[rgba(0,0,0,0.08)] shadow-none">
-            <CardContent className="p-4 text-center">
-              <div className="text-2xl font-black mb-1" style={{ color: c }}>
-                {count}
-              </div>
-              <div className="text-xs text-[#6b7280] font-medium">{label}</div>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
-
-      {/* Pattern cards */}
-      {result.patterns.length > 0 ? (
-        <div>
-          <h3 className="text-xs font-semibold text-[#6b7280] uppercase tracking-wide mb-3">
-            Detected patterns
-          </h3>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {result.patterns.map((p, i) => (
-              <PatternCard key={i} pattern={p} index={i} siteUrl={job.url} />
-            ))}
-          </div>
-        </div>
-      ) : (
-        <Card className="border-[#10b981]/20 shadow-none bg-[#10b981]/5">
-          <CardContent className="p-8 text-center">
-            <div className="text-4xl mb-3">🛡️</div>
-            <h3 className="text-lg font-bold text-[#10b981] mb-1">Clean site verified</h3>
-            <p className="text-sm text-[#6b7280]">No dark patterns detected in our analysis.</p>
-          </CardContent>
-        </Card>
       )}
 
-      {/* Trust score */}
-      {result.trustScore && <TrustScoreSection data={result.trustScore} />}
+      {/* ── TOGGLE — full analysis ── */}
+      <button
+        onClick={() => setShowFullAnalysis((v) => !v)}
+        className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border border-[rgba(0,0,0,0.08)] text-xs font-medium text-[#6b7280] hover:border-[rgba(0,0,0,0.2)] transition-colors bg-white"
+      >
+        {showFullAnalysis ? '↑ Hide full analysis' : '↓ See full analysis'}
+      </button>
 
-      {/* Ethical concerns */}
-      {result.ethicalAnalysis && <EthicalAnalysisSection data={result.ethicalAnalysis} />}
+      {/* ── FULL ANALYSIS (collapsed by default) ── */}
+      {showFullAnalysis && (
+        <div className="space-y-6">
+          {/* Agent trace */}
+          <div>
+            <h3 className="text-xs font-semibold text-[#6b7280] uppercase tracking-wide mb-2">Agent trace</h3>
+            <div className="rounded-xl overflow-hidden" style={{ background: '#0d0d0d', border: '1px solid rgba(255,255,255,0.06)' }}>
+              <div className="px-4 py-2 border-b border-[rgba(255,255,255,0.05)] flex items-center gap-2">
+                <span className="w-1.5 h-1.5 rounded-full bg-[#10b981]" />
+                <span className="text-[9px] font-mono text-[#374151] tracking-widest">COMPLETED · {job.logs.length} EVENTS</span>
+              </div>
+              <div className="p-4 space-y-2 max-h-56 overflow-y-auto">
+                {job.logs.map((log, i) => (
+                  <div key={i} className="flex items-start gap-2">
+                    <span className="text-[#374151] font-mono text-[10px] shrink-0 mt-px">{log.time}</span>
+                    <span className="font-mono text-[10px] shrink-0 font-semibold" style={{ color: LOG_LEVEL_COLORS[log.level] }}>
+                      {LOG_LEVEL_LABELS[log.level]}
+                    </span>
+                    <span className="text-[11px] font-mono leading-relaxed" style={{ color: '#9ca3af' }}>{log.text}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
 
-      {/* Price comparison */}
-      {result.profileComparison && <PriceComparisonSection data={result.profileComparison} />}
+          {/* Stat pills */}
+          <div className="grid grid-cols-3 gap-3">
+            {[
+              { label: 'Critical', count: critical, color: ACCENT },
+              { label: 'Medium', count: medium, color: AMBER },
+              { label: 'Low', count: low, color: BLUE },
+            ].map(({ label, count, color: c }) => (
+              <Card key={label} className="bg-white border-[rgba(0,0,0,0.08)] shadow-none">
+                <CardContent className="p-4 text-center">
+                  <div className="text-2xl font-black mb-1" style={{ color: c }}>{count}</div>
+                  <div className="text-xs text-[#6b7280] font-medium">{label}</div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
 
-      {/* Checkout analysis */}
-      {result.checkoutAnalysis && <CheckoutAnalysisSection data={result.checkoutAnalysis} />}
+          {/* Pattern cards */}
+          {result.patterns.length > 0 && (
+            <div>
+              <h3 className="text-xs font-semibold text-[#6b7280] uppercase tracking-wide mb-3">Detected patterns</h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {result.patterns.map((p, i) => <PatternCard key={i} pattern={p} index={i} siteUrl={job.url} />)}
+              </div>
+            </div>
+          )}
 
-      {/* Visual dark patterns */}
-      {result.visualDarkPatterns && <VisualDarkPatternsSection data={result.visualDarkPatterns} />}
+          {result.trustScore && <TrustScoreSection data={result.trustScore} />}
+          {result.ethicalAnalysis && <EthicalAnalysisSection data={result.ethicalAnalysis} />}
+          {result.profileComparison && <PriceComparisonSection data={result.profileComparison} />}
+          {result.checkoutAnalysis && <CheckoutAnalysisSection data={result.checkoutAnalysis} />}
+          {result.visualDarkPatterns && <VisualDarkPatternsSection data={result.visualDarkPatterns} />}
+        </div>
+      )}
     </div>
   )
 }

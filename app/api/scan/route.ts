@@ -1,6 +1,6 @@
 import { NextRequest } from 'next/server'
 import { fetchPageTwice, compareProfiles, getCheckoutAnalysis, getVisualDarkPatterns } from '@/lib/browser'
-import { analyzeSnapshot, buildSnapshot, extractSocialProof, extractScarcity, extractTimers, getTrustScore, getEthicalAnalysis } from '@/lib/ai'
+import { analyzeSnapshot, buildSnapshot, extractSocialProof, extractScarcity, extractTimers, getTrustScore, getEthicalAnalysis, getActionRecommendation } from '@/lib/ai'
 import type { ScanEvent } from '@/lib/types'
 
 export async function POST(req: NextRequest) {
@@ -146,6 +146,19 @@ export async function POST(req: NextRequest) {
       }
       if (visualSettled.status === 'fulfilled') {
         result.visualDarkPatterns = visualSettled.value
+      }
+
+      // ── Build action recommendation from all gathered data ───────────────────
+      send({ type: 'log', message: 'Building action recommendation...' })
+      try {
+        result.actionRecommendation = await getActionRecommendation(
+          normalizedUrl,
+          product,
+          result,
+          (msg) => send({ type: 'log', message: msg }),
+        )
+      } catch {
+        // non-fatal — result still sent without recommendation
       }
 
       send({ type: 'progress', value: 100 })
