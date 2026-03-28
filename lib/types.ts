@@ -1,3 +1,29 @@
+// ── Shared Types ─────────────────────────────────────────────────────────────
+
+export interface JunkFee {
+  name: string
+  amount: string
+  description: string
+}
+
+export interface SanitizationResult {
+  basePrice: string
+  junkFeesRemoved: JunkFee[]
+  finalPrice: string
+  screenshotUrl?: string
+  trustScore?: number
+  fakeReviewsDetected?: boolean
+  productOrigin?: {
+    isDropshipped: boolean
+    wholesalePriceEstimate: string
+    markupPercentage: string
+    likelySourcedFrom: string
+    analysis: string
+  }
+}
+
+// ── Legacy Types (kept for compatibility with refactored lib/ai.ts) ───────────
+
 export type PageSnapshot = {
   url: string
   text_visit_1: string
@@ -8,7 +34,7 @@ export type PageSnapshot = {
   scarcity: string[]
   prices: string[]
   cta_text: string[]
-  element_snippets: string[]  // raw HTML elements likely to contain dark patterns
+  element_snippets: string[]
 }
 
 export type DetectedPattern = {
@@ -16,7 +42,7 @@ export type DetectedPattern = {
   severity: 'critical' | 'medium' | 'low'
   evidence: string
   explanation: string
-  element_html?: string   // actual HTML element from the page containing the evidence
+  element_html?: string
 }
 
 export type ProfileResult = {
@@ -42,14 +68,14 @@ export type TrustScore = {
 export type EthicalConcern = {
   category: 'Data Privacy' | 'Environmental' | 'Labor Practices' | 'Business Practices' | 'Transparency' | 'Consumer Rights'
   severity: 'high' | 'medium' | 'low'
-  concern: string       // one-line title
-  evidence: string      // specific evidence or reasoning
+  concern: string
+  evidence: string
 }
 
 export type EthicalAnalysis = {
   overall: 'concerning' | 'mixed' | 'acceptable' | 'good'
   concerns: EthicalConcern[]
-  pages_checked: string[]  // which policy pages were successfully fetched
+  pages_checked: string[]
 }
 
 export type ScanResult = {
