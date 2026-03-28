@@ -1,3 +1,29 @@
+// ── Shared Types ─────────────────────────────────────────────────────────────
+
+export interface JunkFee {
+  name: string
+  amount: string
+  description: string
+}
+
+export interface SanitizationResult {
+  basePrice: string
+  junkFeesRemoved: JunkFee[]
+  finalPrice: string
+  screenshotUrl?: string
+  trustScore?: number
+  fakeReviewsDetected?: boolean
+  productOrigin?: {
+    isDropshipped: boolean
+    wholesalePriceEstimate: string
+    markupPercentage: string
+    likelySourcedFrom: string
+    analysis: string
+  }
+}
+
+// ── Legacy/Detailed Scanner Types ───────────────────────────────────────────
+
 export type PageSnapshot = {
   url: string
   text_visit_1: string
@@ -8,7 +34,7 @@ export type PageSnapshot = {
   scarcity: string[]
   prices: string[]
   cta_text: string[]
-  element_snippets: string[]  // raw HTML elements likely to contain dark patterns
+  element_snippets: string[]
 }
 
 export type DetectedPattern = {
@@ -16,14 +42,21 @@ export type DetectedPattern = {
   severity: 'critical' | 'medium' | 'low'
   evidence: string
   explanation: string
-  element_html?: string   // actual HTML element from the page containing the evidence
+  element_html?: string
 }
 
 export type ProfileResult = {
   label: string
   prices: string[]
-  baseline?: boolean
+  baseline: boolean
   discriminated?: boolean
+}
+
+export type LogEntry = {
+  id: string
+  time: string
+  text: string
+  level: 'info' | 'action' | 'warn' | 'success' | 'vision'
 }
 
 export type ProfileComparison = {
@@ -35,21 +68,21 @@ export type ProfileComparison = {
 export type TrustScore = {
   trust_score: number
   verdict: 'trusted' | 'caution' | 'suspicious' | 'dangerous'
-  sources_checked: string[]
   signals: string[]
+  sources_checked: string[]
 }
 
 export type EthicalConcern = {
   category: 'Data Privacy' | 'Environmental' | 'Labor Practices' | 'Business Practices' | 'Transparency' | 'Consumer Rights'
   severity: 'high' | 'medium' | 'low'
-  concern: string       // one-line title
-  evidence: string      // specific evidence or reasoning
+  concern: string
+  evidence: string
 }
 
 export type EthicalAnalysis = {
   overall: 'concerning' | 'mixed' | 'acceptable' | 'good'
   concerns: EthicalConcern[]
-  pages_checked: string[]  // which policy pages were successfully fetched
+  pages_checked: string[]
 }
 
 export type CheckoutAnalysis = {
@@ -75,7 +108,7 @@ export type VisualDarkPatterns = {
 
 export type ScanResult = {
   risk_score: number
-  verdict: string
+  verdict: 'clean' | 'low risk' | 'medium risk' | 'high risk' | 'critical'
   patterns: DetectedPattern[]
   profileComparison?: ProfileComparison
   trustScore?: TrustScore
@@ -90,27 +123,7 @@ export type ScanEvent =
   | { type: 'stream_url'; url: string }
   | { type: 'result'; data: ScanResult }
   | { type: 'error'; message: string }
-
-// ── Cart Cleanser (v3) ────────────────────────────────────────────────────────
-
-export type FeeItem = {
-  name: string
-  amount: string
-  stripped: boolean
-}
-
-export type CartResult = {
-  productName: string
-  basePrice: string
-  originalCartTotal: string
-  sanitizedTotal: string
-  feesStripped: FeeItem[]
-  savings: string
-  success: boolean
-}
-
-export type CleanCartEvent =
-  | { type: 'log'; message: string; level: 'info' | 'warn' | 'action' | 'vision' | 'success' }
-  | { type: 'stream_url'; url: string }
-  | { type: 'result'; data: CartResult }
-  | { type: 'error'; message: string }
+  | { type: 'HEARTBEAT' }
+  | { type: 'STREAMING_URL'; url: string }
+  | { type: 'ACTION'; action: string; selector?: string; text?: string }
+  | { type: 'COMPLETE'; status: string; resultJson?: any }

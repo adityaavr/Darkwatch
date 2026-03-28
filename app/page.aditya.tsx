@@ -8,12 +8,11 @@ import { Badge } from '@/components/ui/badge'
 import { Card, CardContent } from '@/components/ui/card'
 import { Progress } from '@/components/ui/progress'
 import { Globe } from '@/components/globe'
-import { Search, Terminal, CheckCircle2, ShoppingCart, ShieldAlert, ArrowRight } from 'lucide-react'
-import type { ScanResult, DetectedPattern, ScanEvent, ProfileComparison, TrustScore, EthicalAnalysis, EthicalConcern, CheckoutAnalysis, VisualDarkPatterns, VisualDarkPattern, SanitizationResult } from '@/lib/types'
+import type { ScanResult, DetectedPattern, ScanEvent, ProfileComparison, TrustScore, EthicalAnalysis, EthicalConcern, CheckoutAnalysis, VisualDarkPatterns, VisualDarkPattern } from '@/lib/types'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-type LogEntry = { time: string; text: string; level: 'info' | 'action' | 'warn' | 'success' | 'vision' }
+type LogEntry = { time: string; text: string; level: 'info' | 'action' | 'warn' | 'success' }
 
 type ScanJob = {
   id: string
@@ -24,7 +23,6 @@ type ScanJob = {
   progress: number
   streamingUrl?: string
   result?: ScanResult
-  sanitizationResult?: SanitizationResult
   error?: string
 }
 
@@ -45,15 +43,13 @@ const AMBER = '#f59e0b'
 const GREEN = '#10b981'
 const BLUE = '#3b82f6'
 
-const LOG_LEVEL_COLORS = { info: '#60a5fa', action: '#a78bfa', warn: '#ff4757', success: '#10b981', vision: '#f59e0b' }
-const LOG_LEVEL_LABELS = { info: 'INFO', action: 'ACT ', warn: 'WARN', success: 'DONE', vision: 'VISN' }
+const LOG_LEVEL_COLORS = { info: '#60a5fa', action: '#a78bfa', warn: '#ff4757', success: '#10b981' }
+const LOG_LEVEL_LABELS = { info: 'INFO', action: 'ACT ', warn: 'WARN', success: 'DONE' }
 
 function detectLogLevel(msg: string): LogEntry['level'] {
-  const m = msg.toLowerCase()
-  if (m.includes('warn') || m.includes('error') || m.includes('detected') || m.includes('hidden') || m.includes('trap')) return 'warn'
-  if (m.includes('complete') || m.includes('success') || m.includes('✓') || m.includes('sanitized')) return 'success'
-  if (m.includes('vision') || m.includes('brain') || m.includes('ai vision') || m.includes('analyzing layout')) return 'vision'
-  if (m.includes('executing') || m.includes('navigating') || m.includes('searching') || m.includes('adding') || m.includes('clicking') || m.includes('[tinyfish]')) return 'action'
+  if (msg.includes('⚠') || msg.includes('Error') || msg.includes('DETECTED')) return 'warn'
+  if (msg.includes('complete') || msg.includes('Analysis complete') || msg.includes('✓')) return 'success'
+  if (msg.includes('[TinyFish]') || msg.includes('Navigating') || msg.includes('Searching') || msg.includes('Adding') || msg.includes('Proceeding')) return 'action'
   return 'info'
 }
 
@@ -902,141 +898,7 @@ function VisualDarkPatternsSection({ data }: { data: VisualDarkPatterns }) {
 
 // ── Result Detail ─────────────────────────────────────────────────────────────
 
-
-function CleanserDashboard({ result }: { result: SanitizationResult }) {
-  const totalSaved = result.junkFeesRemoved.reduce((acc, fee) => {
-    const amount = parseFloat(fee.amount.replace(/[^0-9.]/g, ''))
-    return acc + (isNaN(amount) ? 0 : amount)
-  }, 0)
-
-  const baseVal = parseFloat(result.basePrice.replace(/[^0-9.]/g, '')) || 0;
-  const junkPercent = baseVal > 0 ? (totalSaved / (baseVal + totalSaved)) * 100 : 0;
-  const basePercent = 100 - junkPercent;
-
-  return (
-    <motion.div
-      initial={{ opacity: 0, scale: 0.98, y: 10 }}
-      animate={{ opacity: 1, scale: 1, y: 0 }}
-      className="w-full text-[#111111] grid grid-cols-1 lg:grid-cols-2 gap-6 my-8"
-    >
-      <div className="bg-white rounded-2xl shadow-[0_20px_50px_rgba(0,0,0,0.08)] overflow-hidden border border-[rgba(0,0,0,0.06)] flex flex-col">
-        <div className="p-8 flex-1">
-          <div className="flex justify-between items-center mb-8">
-            <CheckCircle2 className="text-[#10b981] w-7 h-7" />
-            <Badge className="text-[#10b981] bg-[#10b981]/10 border-0 font-mono text-[10px] uppercase font-black tracking-widest px-2.5 py-1">CLEANSED</Badge>
-          </div>
-          <h2 className="text-2xl font-black mb-1 tracking-tight">Checkout Sanitized</h2>
-          <p className="text-[#6b7280] text-sm mb-8">Deceptive fees automatically neutralized.</p>
-
-          <div className="mb-8">
-             <div className="h-4 w-full rounded-full overflow-hidden flex bg-[#f3f4f6] border border-black/5">
-                <motion.div initial={{ width: 0 }} animate={{ width: `${basePercent}%` }} transition={{ duration: 1.2, ease: [0.22, 1, 0.36, 1] }} className="h-full bg-[#10b981]" />
-                <motion.div initial={{ width: 0 }} animate={{ width: `${junkPercent}%` }} transition={{ duration: 1.2, ease: [0.22, 1, 0.36, 1], delay: 0.2 }} className="h-full bg-[#ff4757]" />
-             </div>
-             <div className="flex justify-between mt-3 text-[10px] font-bold uppercase tracking-widest">
-                <span className="text-[#10b981]">Base Price</span>
-                <span className="text-[#ff4757]">Hidden Fees</span>
-             </div>
-          </div>
-
-          <div className="space-y-4 mb-8">
-            <div className="flex justify-between text-sm">
-              <span className="text-[#6b7280] font-bold uppercase tracking-wider text-[11px]">Original Base</span>
-              <span className="font-black text-[#111111]">{result.basePrice}</span>
-            </div>
-
-            <div className="pt-5 border-t border-dashed border-[rgba(0,0,0,0.1)]">
-              <h3 className="text-[10px] font-black text-[#6b7280] uppercase tracking-[0.15em] mb-4">Neutralized Traps</h3>
-              {result.junkFeesRemoved.length > 0 ? (
-                <div className="space-y-4">
-                  {result.junkFeesRemoved.map((fee, i) => (
-                    <div key={i} className="flex justify-between items-start group">
-                      <div className="flex flex-col">
-                        <span className="text-xs font-black text-[#111111]">{fee.name}</span>
-                        <span className="text-[11px] text-[#6b7280] mt-1 italic leading-tight">"{fee.description}"</span>
-                      </div>
-                      <span className="text-xs font-black text-[#10b981] tabular-nums">-{fee.amount}</span>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="text-xs text-[#6b7280] italic">No deceptive fees found.</div>
-              )}
-            </div>
-          </div>
-        </div>
-        
-        <div className="bg-[#f9f9f7] p-8 border-t border-[rgba(0,0,0,0.06)] flex justify-between items-center">
-          <span className="text-[11px] font-black text-[#6b7280] uppercase tracking-[0.2em]">Sanitized Total</span>
-          <div className="flex flex-col items-end">
-             <span className="text-3xl font-black text-[#111111] tabular-nums">{result.finalPrice}</span>
-             {totalSaved > 0 && <span className="text-[10px] font-bold text-[#10b981]">Saved ${totalSaved.toFixed(2)}</span>}
-          </div>
-        </div>
-      </div>
-
-      <div className="flex flex-col gap-6">
-        <div className="bg-white rounded-2xl shadow-[0_15px_40px_rgba(0,0,0,0.06)] border border-[rgba(0,0,0,0.06)] p-8 flex flex-col items-start gap-4 group">
-          <div className="flex items-center gap-6 w-full">
-            <ArcGauge score={result.trustScore || 85} label="TRUST" size="lg" colorFn={getTrustColor} />
-            <div>
-              <Badge className="mb-3 text-[#f59e0b] bg-[#f59e0b]/10 border-0 font-mono text-[10px] uppercase font-black tracking-widest px-2.5 py-1">AUTHENTICITY ENGINE</Badge>
-              <h3 className="text-xl font-black tracking-tight">Pattern Analysis</h3>
-              <p className="text-[#6b7280] text-sm mt-2 leading-relaxed">AI-driven analysis of review clusters and social proof timers to detect artificial influence campaigns.</p>
-            </div>
-          </div>
-          <div className={`w-full rounded-2xl p-4 border ${result.fakeReviewsDetected ? 'bg-[#ff4757]/5 border-[#ff4757]/10' : 'bg-[#10b981]/5 border-[#10b981]/10'} flex items-center justify-between`}>
-            <div className="text-[10px] font-black uppercase tracking-widest" style={{ color: result.fakeReviewsDetected ? '#ff4757' : '#10b981' }}>Fake Reviews</div>
-            <div className="flex items-center gap-3">
-              <div className="text-sm font-black" style={{ color: result.fakeReviewsDetected ? '#ff4757' : '#10b981' }}>{result.fakeReviewsDetected ? 'DETECTED' : 'AUTHENTIC'}</div>
-              <div className="p-2 rounded-full bg-white shadow-sm">
-                {result.fakeReviewsDetected ? <ShieldAlert size={20} className="text-[#ff4757]" /> : <CheckCircle2 size={20} className="text-[#10b981]" />}
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {result.productOrigin && (
-          <div className="flex-1 bg-white rounded-2xl shadow-[0_15px_40px_rgba(0,0,0,0.06)] border border-[rgba(0,0,0,0.06)] p-8 relative overflow-hidden flex flex-col group">
-            <div className="absolute top-0 left-0 w-1.5 h-full bg-[#3b82f6]" />
-            <div className="flex justify-between items-start mb-6">
-              <div>
-                <Badge className="mb-3 text-[#3b82f6] bg-[#3b82f6]/10 border-0 font-mono text-[10px] uppercase font-black tracking-widest px-2.5 py-1">REALITY CHECK</Badge>
-                <h3 className="text-2xl font-black tracking-tight uppercase italic">Supply Chain Analysis</h3>
-              </div>
-              {result.productOrigin.isDropshipped && (
-                 <span className="px-3 py-1 rounded-full bg-[#ff4757] text-white text-[10px] font-black uppercase tracking-widest animate-pulse shadow-lg shadow-[#ff4757]/20">DROPSHIP ALERT</span>
-              )}
-            </div>
-
-            <div className="grid grid-cols-2 gap-4 mb-6">
-               <div className="bg-[#f9f9f7] p-4 rounded-xl border border-black/5">
-                 <div className="text-[9px] font-black text-[#6b7280] uppercase tracking-widest mb-1">Market Value</div>
-                 <div className="text-lg font-black text-[#111111] tabular-nums">{result.productOrigin.wholesalePriceEstimate}</div>
-               </div>
-               <div className="bg-[#f9f9f7] p-4 rounded-xl border border-black/5">
-                 <div className="text-[9px] font-black text-[#6b7280] uppercase tracking-widest mb-1">Markup</div>
-                 <div className="text-lg font-black text-[#ff4757] tabular-nums">{result.productOrigin.markupPercentage}</div>
-               </div>
-               <div className="col-span-2 bg-[#f9f9f7] p-4 rounded-xl border border-black/5 flex justify-between items-center">
-                 <div className="text-[9px] font-black text-[#6b7280] uppercase tracking-widest">Source</div>
-                 <div className="text-xs font-black text-[#111111] truncate max-w-[150px]">{result.productOrigin.likelySourcedFrom}</div>
-               </div>
-            </div>
-
-            <div className="bg-[#3b82f6]/5 border border-[#3b82f6]/10 rounded-xl p-4 flex-1 italic relative overflow-hidden">
-              <div className="text-[9px] font-black text-[#3b82f6] uppercase tracking-[0.2em] mb-2">AI Analyst Conclusion</div>
-              <p className="text-xs text-[#4b5563] font-medium leading-relaxed">"{result.productOrigin.analysis}"</p>
-            </div>
-          </div>
-        )}
-      </div>
-    </motion.div>
-  )
-}
-
 function ResultDetail({ job }: { job: ScanJob }) {
-
   const result = job.result!
   const color = getRiskColor(result.risk_score)
   const critical = result.patterns.filter((p) => p.severity === 'critical').length
@@ -1045,7 +907,6 @@ function ResultDetail({ job }: { job: ScanJob }) {
 
   return (
     <div className="space-y-6">
-      {job.sanitizationResult && <CleanserDashboard result={job.sanitizationResult} />}
       {/* Hero row — risk gauge + optional trust gauge + verdict */}
       <div className="flex flex-col sm:flex-row gap-6 items-start">
         <div className="flex gap-3 items-end shrink-0">
@@ -1193,10 +1054,10 @@ export default function Page() {
   const startScan = useCallback(
     async (job: ScanJob) => {
       try {
-        const res = await fetch('/api/clean-cart', {
+        const res = await fetch('/api/scan', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ url: job.url, query: job.productQuery }),
+          body: JSON.stringify({ url: job.url, productQuery: job.productQuery }),
         })
 
         if (!res.ok || !res.body) {
@@ -1223,70 +1084,39 @@ export default function Page() {
           for (const line of lines) {
             if (!line.startsWith('data: ')) continue
             try {
-              const eventData = line.slice(6).trim()
-              if (!eventData) continue
-              const event = JSON.parse(eventData)
-              
-              if (event.type === 'STREAMING_URL') {
-                const sUrl = event.url || event.streamingUrl || event.streamUrl || event.data || event.streaming_url
-                if (sUrl) {
-                  setJobs((prev) => prev.map((j) => (j.id === job.id ? { ...j, streamingUrl: sUrl } : j)))
-                }
-                continue 
+              const event = JSON.parse(line.slice(6)) as ScanEvent
+              if (event.type === 'log') {
+                const entry: LogEntry = { time: nowTime(), text: event.message, level: detectLogLevel(event.message) }
+                setJobs((prev) =>
+                  prev.map((j) =>
+                    j.id === job.id ? { ...j, logs: [...j.logs, entry] } : j,
+                  ),
+                )
+              } else if (event.type === 'progress') {
+                setJobs((prev) =>
+                  prev.map((j) => (j.id === job.id ? { ...j, progress: event.value } : j)),
+                )
+              } else if (event.type === 'stream_url') {
+                setJobs((prev) =>
+                  prev.map((j) => (j.id === job.id ? { ...j, streamingUrl: event.url } : j)),
+                )
+              } else if (event.type === 'result') {
+                setJobs((prev) =>
+                  prev.map((j) =>
+                    j.id === job.id
+                      ? { ...j, status: 'done', result: event.data, progress: 100 }
+                      : j,
+                  ),
+                )
+              } else if (event.type === 'error') {
+                setJobs((prev) =>
+                  prev.map((j) =>
+                    j.id === job.id ? { ...j, status: 'error', error: event.message } : j,
+                  ),
+                )
               }
-              
-              if (event.type === 'HEARTBEAT') continue;
-              
-              if (event.type === 'COMPLETE' && event.status === 'COMPLETED') {
-                if (event.resultJson) {
-                  const parsed = typeof event.resultJson === 'string' ? JSON.parse(event.resultJson) : event.resultJson
-                  if (parsed && parsed.basePrice) {
-                     // Create a mock ScanResult to satisfy Aditya's UI components
-                     const mockResult = {
-                       risk_score: 85,
-                       verdict: 'high risk',
-                       patterns: parsed.junkFeesRemoved.map((f: any) => ({
-                         pattern: 'Deceptive Fee',
-                         severity: 'critical',
-                         evidence: f.name,
-                         explanation: f.description
-                       })),
-                       trustScore: {
-                         trust_score: parsed.trustScore || 45,
-                         verdict: parsed.fakeReviewsDetected ? 'suspicious' : 'trusted',
-                         signals: parsed.fakeReviewsDetected ? ['Fake reviews detected'] : [],
-                         sources_checked: []
-                       }
-                     }
-                     
-                     setJobs((prev) =>
-                       prev.map((j) =>
-                         j.id === job.id
-                           ? { ...j, status: 'done', sanitizationResult: parsed, result: mockResult as any, progress: 100 }
-                           : j,
-                       ),
-                     )
-                  }
-                }
-              } else {
-                let logText = event.message || event.text || event.thought || event.reasoning || (event.step?.thought || event.step?.action) || (event.action ? `Executing: ${event.action} ${event.selector || event.text || ''}` : '');
-                if (logText && logText !== 'PROGRESS') {
-                  const entry = { time: nowTime(), text: logText, level: detectLogLevel(logText) as LogEntry['level'] }
-                  setJobs((prev) =>
-                    prev.map((j) => {
-                      if (j.id === job.id) {
-                        const newLogs = [...j.logs, entry];
-                        // Simulate progress 0 -> 95 based on log length
-                        const prog = Math.min(95, newLogs.length * 5);
-                        return { ...j, logs: newLogs, progress: prog };
-                      }
-                      return j;
-                    })
-                  )
-                }
-              }
-            } catch (e) {
-              // Ignore malformed JSON chunks
+            } catch {
+              // malformed event — skip
             }
           }
         }

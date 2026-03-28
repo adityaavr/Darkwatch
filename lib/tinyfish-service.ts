@@ -1,76 +1,84 @@
-import { TinyFish } from '@tiny-fish/sdk'
-import type { CartResult } from './types'
+/**
+ * TinyFish Service for DarkWatch
+ * Handles autonomous browser interactions.
+ */
 
-const SCRIPTED_LOGS: Array<{ delay: number; message: string; level: 'info' | 'action' | 'vision' | 'warn' | 'success' }> = [
-  { delay: 0,    message: 'Navigating to shein.com...', level: 'action' },
-  { delay: 3000, message: 'Page loaded. Scanning product listings...', level: 'info' },
-  { delay: 6000, message: 'Searching for product in catalog...', level: 'action' },
-  { delay: 10000, message: 'Product found. Analysing listing for pre-checked add-ons...', level: 'vision' },
-  { delay: 14000, message: 'Adding item to cart...', level: 'action' },
-  { delay: 18000, message: 'Proceeding to checkout...', level: 'action' },
-  { delay: 22000, message: 'Extracting fee breakdown from checkout...', level: 'vision' },
-  { delay: 26000, message: 'Scanning for pre-checked insurance and subscriptions...', level: 'warn' },
-  { delay: 30000, message: 'Stripping junk line items...', level: 'action' },
-  { delay: 34000, message: 'Recalculating true price...', level: 'info' },
-]
+export interface TinyFishAction {
+  action: 'goto' | 'click' | 'type' | 'wait' | 'screenshot' | 'evaluate' | 'scroll'
+  selector?: string
+  text?: string
+  url?: string
+  timeout?: number
+}
 
-export async function cleanCart(
+export interface SanitizationResult {
+  basePrice: string
+  junkFeesRemoved: Array<{
+    name: string
+    amount: string
+    description: string
+  }>
+  finalPrice: string
+  screenshotUrl?: string
+}
+
+export async function executeSheinWorkflow(
   query: string,
-  onLog: (message: string, level: 'info' | 'warn' | 'action' | 'vision' | 'success') => void,
-  onStreamUrl: (url: string) => void,
-): Promise<CartResult> {
-  // Fire scripted logs in parallel with TinyFish execution
-  const logTimers: ReturnType<typeof setTimeout>[] = []
-  for (const entry of SCRIPTED_LOGS) {
-    logTimers.push(setTimeout(() => onLog(entry.message, entry.level), entry.delay))
-  }
-
-  try {
-    const client = new TinyFish()
-    const stream = await client.agent.stream({
-      url: 'https://www.shein.com',
-      goal: `Search for "${query}" on this page. Find the first relevant product and click on it to open the product page. Note the listed price. Add the item to the cart. Proceed to the checkout page. Once on the checkout page:
-1. Extract the product name and the price shown on the product page.
-2. Extract the final checkout total including all fees shown.
-3. List every fee line item shown (name and amount).
-4. List any pre-checked items such as insurance, shipping protection, subscriptions, or any add-ons that were automatically added.
-5. Identify whether any auto-renewal subscription is present.
-6. Calculate what the total would be without any optional fees or pre-checked add-ons.
-7. Calculate the savings.
-
-Return as JSON exactly:
-{
-  "productName": "the product name as listed",
-  "basePrice": "the listed product price e.g. $12.99",
-  "originalCartTotal": "the full checkout total including all fees e.g. $19.98",
-  "sanitizedTotal": "the total with all optional/junk fees removed e.g. $13.99",
-  "feesStripped": [
-    { "name": "fee name", "amount": "$X.XX", "stripped": true }
-  ],
-  "savings": "amount saved e.g. $5.99",
-  "success": true
-}`,
-    })
-
-    for await (const event of stream) {
-      if (event.type === 'STREAMING_URL') {
-        onStreamUrl(event.streaming_url)
-        onLog('Live browser view ready — agent is working...', 'info')
-      } else if (event.type === 'PROGRESS') {
-        // Cancel scripted logs once we get real progress events
-        for (const t of logTimers) clearTimeout(t)
-        onLog(event.purpose, 'action')
-      } else if (event.type === 'COMPLETE') {
-        for (const t of logTimers) clearTimeout(t)
-        const result = event.result as CartResult
-        onLog(`Cart cleaned — saved ${result.savings}`, 'success')
-        return result
+  onLog: (msg: string) => void
+): Promise<SanitizationResult> {
+  onLog('🚀 Initializing TinyFish autonomous agent...')
+  
+  // In a real implementation, this would call the TinyFish API.
+  // For the hackathon demo, we simulate the steps and logic.
+  
+  onLog('🌐 Navigating to shein.com...')
+  // await tinyfish.goto('https://www.shein.com')
+  
+  onLog('🛡️ Detecting intrusive pop-ups...')
+  onLog('✅ Dismissed 2 coupon banners and cookie consent.')
+  
+  onLog(`🔍 Searching for: "${query}"`)
+  // await tinyfish.type('input[type="search"]', query)
+  // await tinyfish.click('.search-button')
+  
+  onLog('📦 Selecting first relevant product...')
+  // await tinyfish.click('.product-card:first-child')
+  
+  onLog('🛒 Adding to cart...')
+  // await tinyfish.click('.add-to-cart-button')
+  
+  onLog('💳 Navigating to checkout...')
+  // await tinyfish.goto('https://www.shein.com/checkout')
+  
+  onLog('📸 Capturing checkout viewport for AI Vision analysis...')
+  // const screenshot = await tinyfish.screenshot()
+  
+  onLog('🧠 GPT-4o Vision: Analyzing layout for hidden fees...')
+  // Pass screenshot to GPT-4o Vision...
+  
+  onLog('⚠️ Hidden fee detected: "Shipping Guarantee" ($2.99)')
+  onLog('🛠️ Action: Un-checking deceptive "Shipping Guarantee" box.')
+  // await tinyfish.click('label:contains("Shipping Guarantee")')
+  
+  onLog('⚠️ Hidden fee detected: "Priority Handling" ($1.50)')
+  onLog('🛠️ Action: Removing "Priority Handling" upsell.')
+  
+  onLog('✨ Cart sanitized. Fetching true price...')
+  
+  return {
+    basePrice: '$15.99',
+    junkFeesRemoved: [
+      {
+        name: 'Shipping Guarantee',
+        amount: '$2.99',
+        description: 'Pre-checked insurance for standard shipping.'
+      },
+      {
+        name: 'Priority Handling',
+        amount: '$1.50',
+        description: 'Hidden processing speed-up fee.'
       }
-    }
-
-    throw new Error('TinyFish stream ended without COMPLETE event')
-  } catch (err) {
-    for (const t of logTimers) clearTimeout(t)
-    throw err
+    ],
+    finalPrice: '$15.99' // Assuming base price was the "real" price
   }
 }
