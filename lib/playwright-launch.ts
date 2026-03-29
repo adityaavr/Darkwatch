@@ -10,10 +10,22 @@ export async function launchPlaywrightBrowser(
 ): Promise<Browser> {
   const extraArgs = options?.args ?? []
 
-  if (process.env.VERCEL) {
+  const shouldUseServerlessChromium =
+    process.env.VERCEL === "1" ||
+    Boolean(process.env.VERCEL_ENV) ||
+    process.env.AWS_EXECUTION_ENV !== undefined ||
+    process.platform === "linux"
+
+  if (shouldUseServerlessChromium) {
     const chromiumPack = await import("@sparticuz/chromium")
     const executablePath = await chromiumPack.default.executablePath()
     const args = [...chromiumPack.default.args, ...extraArgs]
+
+    if (!executablePath) {
+      throw new Error(
+        "Serverless Chromium executable path was not resolved on this runtime."
+      )
+    }
 
     return chromium.launch({
       headless: true,

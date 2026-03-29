@@ -7,12 +7,20 @@ const nextConfig = {
     "playwright-core",
     "playwright-extra",
     "puppeteer-extra-plugin-stealth",
+    "@sparticuz/chromium",
   ],
   outputFileTracingIncludes: {
-    "/api/scan": ["./node_modules/playwright-core/.local-browsers/**/*"],
-    "/api/clean-cart": ["./node_modules/playwright-core/.local-browsers/**/*"],
+    "/api/scan": [
+      "./node_modules/playwright-core/.local-browsers/**/*",
+      "./node_modules/@sparticuz/chromium/bin/**/*",
+    ],
+    "/api/clean-cart": [
+      "./node_modules/playwright-core/.local-browsers/**/*",
+      "./node_modules/@sparticuz/chromium/bin/**/*",
+    ],
     "/api/marketplace-retry": [
       "./node_modules/playwright-core/.local-browsers/**/*",
+      "./node_modules/@sparticuz/chromium/bin/**/*",
     ],
   },
 }

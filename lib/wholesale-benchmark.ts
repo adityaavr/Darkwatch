@@ -1,6 +1,6 @@
-import { chromium } from "playwright"
 import type { Browser, Page } from "playwright"
 import type { WholesaleBenchmark, WholesaleBenchmarkResult } from "./types"
+import { launchPlaywrightBrowser } from "./playwright-launch"
 
 type SourceConfig = {
   source: "AliExpress" | "Alibaba"
@@ -35,8 +35,7 @@ function parseRetailPrice(raw: string): number | null {
 }
 
 async function launchBrowser(): Promise<Browser> {
-  return chromium.launch({
-    headless: true,
+  return launchPlaywrightBrowser({
     args: [
       "--no-sandbox",
       "--disable-setuid-sandbox",
