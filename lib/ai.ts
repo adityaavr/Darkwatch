@@ -251,7 +251,7 @@ async function analyzeWithOpenAI(snapshot: PageSnapshot): Promise<ScanResult> {
   } catch {
     return { risk_score: 0, verdict: "clean", patterns: [] }
   }
-}
+} 
 
 // ── Gemini (fallback) ─────────────────────────────────────────────────────────
 
