@@ -6,17 +6,16 @@
  * If a site blocks automation, marks it as unavailable (no guessed prices).
  */
 
-import { chromium } from "playwright"
 import type { Browser, Page } from "playwright"
 import OpenAI from "openai"
 import type { MarketplaceComparison, MarketplaceResult } from "./types"
 import { planMarketplaceRecovery } from "./automation-router"
+import { launchPlaywrightBrowser } from "./playwright-launch"
 
 // ── Browser factory (intentionally duplicated from playwright-service to avoid circular imports) ──
 
 async function launchBrowser(): Promise<Browser> {
-  return chromium.launch({
-    headless: true,
+  return launchPlaywrightBrowser({
     args: [
       "--no-sandbox",
       "--disable-setuid-sandbox",

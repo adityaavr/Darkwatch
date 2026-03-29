@@ -5,14 +5,14 @@
   "private": true,
   "scripts": {
     "dev": "next dev --turbopack",
-    "build": "PLAYWRIGHT_BROWSERS_PATH=0 playwright install chromium && next build",
+    "build": "next build",
     "start": "next start",
     "lint": "eslint",
     "format": "prettier --write \"**/*.{ts,tsx}\"",
-    "typecheck": "tsc --noEmit",
-    "postinstall": "PLAYWRIGHT_BROWSERS_PATH=0 playwright install chromium"
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@sparticuz/chromium": "^123.0.1",
     "@ai-sdk/openai": "^3.0.48",
     "@anthropic-ai/sdk": "^0.80.0",
     "@google/generative-ai": "^0.24.1",

@@ -1,0 +1,16 @@
+{
+  "functions": {
+    "app/api/scan/route.ts": {
+      "maxDuration": 300,
+      "includeFiles": "node_modules/playwright-core/.local-browsers/**"
+    },
+    "app/api/clean-cart/route.ts": {
+      "maxDuration": 300,
+      "includeFiles": "node_modules/playwright-core/.local-browsers/**"
+    },
+    "app/api/marketplace-retry/route.ts": {
+      "maxDuration": 180,
+      "includeFiles": "node_modules/playwright-core/.local-browsers/**"
+    }
+  }
+}

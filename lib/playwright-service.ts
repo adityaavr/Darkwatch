@@ -10,10 +10,10 @@
  * Plain HTTP (fetchPagePlain) is still used for static pages (trust sites, policy pages).
  */
 
-import { chromium } from "playwright"
 import type { Page, Browser } from "playwright"
 import OpenAI from "openai"
 import type { JunkFee, VisualDarkPatterns } from "./types"
+import { launchPlaywrightBrowser } from "./playwright-launch"
 
 type LogLevel = "info" | "warn" | "action" | "vision" | "success"
 
@@ -50,25 +50,20 @@ function pickUA() {
 // ── Browser factory ────────────────────────────────────────────────────────────
 
 async function launchBrowser(): Promise<Browser> {
-  return chromium.launch({
-    headless: true,
+  return launchPlaywrightBrowser({
     args: [
       "--no-sandbox",
       "--disable-setuid-sandbox",
-      // Core anti-detection flags
       "--disable-blink-features=AutomationControlled",
       "--disable-features=IsolateOrigins,site-per-process",
-      // Resource flags
       "--disable-dev-shm-usage",
       "--disable-accelerated-2d-canvas",
       "--no-first-run",
       "--no-zygote",
       "--disable-gpu",
-      // Make headless less detectable
       "--window-size=1440,900",
       "--hide-scrollbars",
       "--mute-audio",
-      // Language/locale
       "--lang=en-US,en",
       "--accept-lang=en-US,en;q=0.9",
     ],
