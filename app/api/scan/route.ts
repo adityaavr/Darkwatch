@@ -10,6 +10,18 @@ import type { SanitizationResult } from "@/lib/types"
 export const maxDuration = 300
 
 export async function POST(req: NextRequest) {
+  const apiKey = process.env.OPENAI_API_KEY?.trim()
+  if (!apiKey) {
+    return new Response(
+      JSON.stringify({
+        error:
+          "OPENAI_API_KEY is missing on this deployment environment. Add it to the active Vercel environment and redeploy.",
+        vercelEnv: process.env.VERCEL_ENV ?? null,
+      }),
+      { status: 500, headers: { "Content-Type": "application/json" } }
+    )
+  }
+
   const { url, productQuery } = await req.json()
 
   if (!url || typeof url !== "string") {
