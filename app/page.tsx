@@ -2921,12 +2921,12 @@ export default function Page() {
           <div className="relative z-10 flex min-h-screen flex-col items-center justify-center px-6 pt-16">
             <div className="mt-40 mb-10 text-center">
               {/* Eyebrow */}
-              <div className="mb-5 inline-flex items-center gap-2 rounded-full border border-[rgba(0,0,0,0.08)] bg-white/80 px-3 py-1 backdrop-blur-sm">
+              {/* <div className="mb-5 inline-flex items-center gap-2 rounded-full border border-[rgba(0,0,0,0.08)] bg-white/80 px-3 py-1 backdrop-blur-sm">
                 <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[#ff4757]" />
                 <span className="text-[11px] font-semibold tracking-widest text-[#6b7280] uppercase">
                   AI Shopping Bodyguard
                 </span>
-              </div>
+              </div> */}
               <h1
                 className="mb-4 text-[3.8rem] leading-[0.95] font-black tracking-tight text-[#111111]"
                 style={{ fontFamily: "var(--font-display)" }}
@@ -3004,60 +3004,58 @@ export default function Page() {
             </div>
           </div>
 
-          {/* Bottom left — stat pills */}
-          <div className="absolute bottom-6 left-8 z-20 flex flex-col gap-1.5">
-            {[
-              { dot: "#10b981", label: "12,847 scans today" },
-              { dot: "#ff4757", label: "34,291 patterns caught" },
-              { dot: "#f59e0b", label: "2,156 sites flagged" },
-            ].map(({ dot, label }) => (
-              <div
-                key={label}
-                className="flex items-center gap-2 rounded-full border border-[rgba(0,0,0,0.08)] bg-white/70 px-3 py-1 backdrop-blur-sm"
-              >
-                <span
-                  className="h-1.5 w-1.5 shrink-0 rounded-full"
-                  style={{ background: dot }}
-                />
-                <span className="text-xs text-[#6b7280]">{label}</span>
-              </div>
-            ))}
-          </div>
+          {/* Footer credit */}
+          <div className="absolute right-8 bottom-6 z-20">
+            <div className="flex items-center gap-2 rounded-xl border border-[rgba(0,0,0,0.08)] bg-white/85 px-3 py-2 backdrop-blur-sm">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src="/image.png"
+                alt="Aditya Rane"
+                className="h-7 w-7 rounded-full border border-[rgba(0,0,0,0.1)] object-cover"
+              />
+              <p className="text-[11px] font-medium text-[#374151]">
+                Built by{" "}
+                <span className="font-semibold text-[#111111]">
+                  Aditya Rane
+                </span>
+              </p>
 
-          {/* Bottom right — live detection feed */}
-          <div className="absolute right-8 bottom-6 z-20 w-60">
-            <div className="mb-1.5 flex items-center justify-end gap-1.5">
-              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[#ff4757]" />
-              <span className="text-[10px] font-medium tracking-wide text-[#9ca3af] uppercase">
-                Live detections
-              </span>
+              <div className="flex items-center gap-2">
+                <a
+                  href="https://www.linkedin.com/in/adityavrane/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  aria-label="LinkedIn"
+                  className="rounded-md border border-[rgba(0,0,0,0.1)] bg-white p-1.5 text-[#6b7280] transition-colors hover:text-[#111111]"
+                >
+                  <svg
+                    viewBox="0 0 24 24"
+                    className="h-3.5 w-3.5"
+                    fill="currentColor"
+                    aria-hidden="true"
+                  >
+                    <path d="M19 3A2 2 0 0 1 21 5V19A2 2 0 0 1 19 21H5A2 2 0 0 1 3 19V5A2 2 0 0 1 5 3H19ZM8.05 10.55H5.56V18H8.05V10.55ZM6.8 6.58C6 6.58 5.45 7.11 5.45 7.81C5.45 8.5 6 9.04 6.77 9.04H6.79C7.61 9.04 8.12 8.5 8.12 7.81C8.11 7.11 7.61 6.58 6.8 6.58ZM18.44 13.77C18.44 11.29 17.12 10.13 15.36 10.13C13.94 10.13 13.3 10.9 12.94 11.45V10.55H10.45C10.48 11.15 10.45 18 10.45 18H12.94V13.84C12.94 13.62 12.96 13.4 13.02 13.24C13.2 12.8 13.6 12.34 14.28 12.34C15.17 12.34 15.53 13.02 15.53 14.01V18H18.02V13.72L18.44 13.77Z" />
+                  </svg>
+                </a>
+
+                <a
+                  href="https://github.com/adityaavr"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  aria-label="GitHub"
+                  className="rounded-md border border-[rgba(0,0,0,0.1)] bg-white p-1.5 text-[#6b7280] transition-colors hover:text-[#111111]"
+                >
+                  <svg
+                    viewBox="0 0 24 24"
+                    className="h-3.5 w-3.5"
+                    fill="currentColor"
+                    aria-hidden="true"
+                  >
+                    <path d="M12 2C6.48 2 2 6.59 2 12.25C2 16.78 4.87 20.62 8.84 21.98C9.34 22.08 9.52 21.76 9.52 21.49C9.52 21.25 9.51 20.45 9.51 19.59C6.73 20.21 6.14 18.38 6.14 18.38C5.68 17.17 5.03 16.84 5.03 16.84C4.12 16.2 5.1 16.21 5.1 16.21C6.1 16.28 6.63 17.26 6.63 17.26C7.52 18.82 8.97 18.38 9.54 18.12C9.63 17.46 9.89 17.01 10.17 16.75C7.95 16.49 5.62 15.61 5.62 11.67C5.62 10.55 6.01 9.64 6.66 8.92C6.56 8.66 6.22 7.61 6.76 6.19C6.76 6.19 7.6 5.91 9.5 7.24C10.3 7.01 11.15 6.9 12 6.9C12.85 6.9 13.7 7.01 14.5 7.24C16.4 5.91 17.24 6.19 17.24 6.19C17.78 7.61 17.44 8.66 17.34 8.92C17.99 9.64 18.38 10.55 18.38 11.67C18.38 15.62 16.04 16.49 13.82 16.74C14.17 17.06 14.48 17.68 14.48 18.63C14.48 19.98 14.47 21.07 14.47 21.49C14.47 21.76 14.65 22.09 15.16 21.98C19.13 20.62 22 16.78 22 12.25C22 6.59 17.52 2 12 2Z" />
+                  </svg>
+                </a>
+              </div>
             </div>
-            <AnimatePresence mode="wait">
-              <motion.div
-                key={liveFeedIndex}
-                initial={{ opacity: 0, y: 6 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -6 }}
-                transition={{ duration: 0.35 }}
-                className="rounded-xl border border-[rgba(0,0,0,0.08)] bg-white/80 px-3.5 py-2.5 text-right backdrop-blur-sm"
-              >
-                <div
-                  className="text-sm font-black text-[#111111]"
-                  style={{
-                    fontFamily: "var(--font-display)",
-                    letterSpacing: "0.01em",
-                  }}
-                >
-                  {LIVE_FEED[liveFeedIndex].site}
-                </div>
-                <div
-                  className="mt-0.5 text-[11px] font-medium"
-                  style={{ color: ACCENT }}
-                >
-                  {LIVE_FEED[liveFeedIndex].pattern}
-                </div>
-              </motion.div>
-            </AnimatePresence>
           </div>
         </motion.div>
       ) : (
