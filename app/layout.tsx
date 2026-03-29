@@ -1,4 +1,4 @@
-import { DM_Sans, DM_Mono } from "next/font/google"
+import { DM_Sans, DM_Mono, Barlow_Condensed } from "next/font/google"
 
 import "./globals.css"
 import { ThemeProvider } from "@/components/theme-provider"
@@ -15,6 +15,12 @@ const dmMono = DM_Mono({
   weight: ["400", "500"],
 })
 
+const barlowCondensed = Barlow_Condensed({
+  subsets: ["latin"],
+  variable: "--font-display",
+  weight: ["700", "900"],
+})
+
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -24,7 +30,7 @@ export default function RootLayout({
     <html
       lang="en"
       suppressHydrationWarning
-      className={cn("antialiased", dmMono.variable, "font-sans", dmSans.variable)}
+      className={cn("antialiased", dmMono.variable, "font-sans", dmSans.variable, barlowCondensed.variable)}
     >
       <body>
         <ThemeProvider>{children}</ThemeProvider>

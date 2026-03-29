@@ -1,199 +1,418 @@
-import { TinyFish, BrowserProfile, ProxyCountryCode } from '@tiny-fish/sdk'
-import type { SanitizationResult } from './types'
+/**
+ * tinyfish-service.ts  (now Playwright-powered — TinyFish removed)
+ *
+ * Responsibilities:
+ *   1. buildSitePlan      — GPT-4o generates site-specific plan (cart button, known fees, search URL)
+ *   2. runPlaywrightScan  — Playwright browser: navigate → screenshot → add to cart → detect fees
+ *   3. cleanCart          — Public entry point: orchestrates all tasks and returns SanitizationResult
+ */
 
-type LogLevel = 'info' | 'warn' | 'action' | 'vision' | 'success'
+import OpenAI from "openai"
+import { analyzeProductPage } from "./product-analysis"
+import { resolvePriceWithAiWebFallback } from "./price-fallback"
+import { runPlaywrightScan } from "./playwright-service"
+import type { SanitizationResult, JunkFee } from "./types"
 
-// Scripted fallback logs — shown until real PROGRESS events arrive from TinyFish
-const SCRIPTED_LOGS: Array<{ delay: number; message: string; level: LogLevel }> = [
-  { delay: 0,     message: 'Launching browser with US proxy...', level: 'action' },
-  { delay: 4000,  message: 'Navigating to site...', level: 'action' },
-  { delay: 9000,  message: 'Dismissing cookie banners...', level: 'action' },
-  { delay: 14000, message: 'Searching for product...', level: 'action' },
-  { delay: 20000, message: 'Examining product listing and reviews...', level: 'vision' },
-  { delay: 26000, message: 'Checking for fake review signals...', level: 'vision' },
-  { delay: 32000, message: 'Adding item to cart...', level: 'action' },
-  { delay: 38000, message: 'Proceeding to checkout...', level: 'action' },
-  { delay: 44000, message: 'Scanning for pre-checked add-ons and junk fees...', level: 'warn' },
-  { delay: 50000, message: 'Analysing product origin and supply chain...', level: 'vision' },
-  { delay: 56000, message: 'Estimating wholesale value and markup...', level: 'info' },
-  { delay: 62000, message: 'Compiling findings...', level: 'info' },
+type LogLevel = "info" | "warn" | "action" | "vision" | "success"
+
+// ── Scripted fallback logs ─────────────────────────────────────────────────────
+// Shown while the real browser is warming up, so the UI never looks frozen.
+
+const SCRIPTED_LOGS: Array<{
+  delay: number
+  message: string
+  level: LogLevel
+}> = [
+  {
+    delay: 0,
+    message: "GPT-4o analysing site structure and known patterns...",
+    level: "vision",
+  },
+  { delay: 6000, message: "Browser opening product page...", level: "action" },
+  {
+    delay: 16000,
+    message: "Scanning for pre-checked fees and hidden add-ons...",
+    level: "vision",
+  },
+  { delay: 28000, message: "Adding item to cart...", level: "action" },
+  { delay: 42000, message: "Inspecting cart for junk fees...", level: "warn" },
+  {
+    delay: 58000,
+    message: "Capturing visual evidence of dark patterns...",
+    level: "vision",
+  },
+  { delay: 75000, message: "Compiling findings...", level: "info" },
 ]
 
-const GOAL = (url: string, query: string) => `You are DarkWatch, an AI shopping protection agent. Protect the user from junk fees, fake reviews, and dropshipped products sold at massive markups.
+// ── Site plan ──────────────────────────────────────────────────────────────────
 
-SITE: ${url}
-PRODUCT TO FIND: "${query}"
+type SitePlan = {
+  productUrl: string // best URL to start on — search results or the original
+  isHomepage: boolean // true when user gave us a domain root
+  cartButtonLabel: string // exact "Add to Cart" button text on this site
+  knownFees: string[] // fee patterns GPT-4o knows about
+  requiresLoginForCart: boolean
+}
 
-═══ STEP-BY-STEP INSTRUCTIONS ═══
+function isHomepageUrl(url: string): boolean {
+  try {
+    const u = new URL(url)
+    return u.pathname === "/" || u.pathname === ""
+  } catch {
+    return true
+  }
+}
 
-STEP 1 — CLEAR OBSTACLES
-- Navigate to the site
-- If you see a cookie consent banner or popup, dismiss it immediately (click Accept, Close, or X)
-- If an age verification appears, confirm it
-- Do not spend more than 2 actions on any single obstacle
+// Hardcoded search URL templates — used when GPT-4o fails so the browser
+// never starts lost on a homepage.
+const KNOWN_SEARCH_URLS: Record<string, (q: string) => string> = {
+  "shein.com": (q) =>
+    `https://www.shein.com/catalog/search.html?q=${encodeURIComponent(q)}`,
+  "temu.com": (q) =>
+    `https://www.temu.com/search_result.html?search_key=${encodeURIComponent(q)}`,
+  "amazon.com": (q) => `https://www.amazon.com/s?k=${encodeURIComponent(q)}`,
+  "amazon.co.uk": (q) =>
+    `https://www.amazon.co.uk/s?k=${encodeURIComponent(q)}`,
+  "ebay.com": (q) =>
+    `https://www.ebay.com/sch/i.html?_nkw=${encodeURIComponent(q)}`,
+  "aliexpress.com": (q) =>
+    `https://www.aliexpress.com/wholesale?SearchText=${encodeURIComponent(q)}`,
+  "etsy.com": (q) => `https://www.etsy.com/search?q=${encodeURIComponent(q)}`,
+  "walmart.com": (q) =>
+    `https://www.walmart.com/search?q=${encodeURIComponent(q)}`,
+  "target.com": (q) =>
+    `https://www.target.com/s?searchTerm=${encodeURIComponent(q)}`,
+  "asos.com": (q) => `https://www.asos.com/search/?q=${encodeURIComponent(q)}`,
+  "zara.com": (q) =>
+    `https://www.zara.com/us/en/search?searchTerm=${encodeURIComponent(q)}`,
+  "hm.com": (q) =>
+    `https://www2.hm.com/en_us/search-results.html?q=${encodeURIComponent(q)}`,
+  "bestbuy.com": (q) =>
+    `https://www.bestbuy.com/site/searchpage.jsp?st=${encodeURIComponent(q)}`,
+  "wayfair.com": (q) =>
+    `https://www.wayfair.com/keyword.php?keyword=${encodeURIComponent(q)}`,
+  "booking.com": (q) =>
+    `https://www.booking.com/searchresults.html?ss=${encodeURIComponent(q)}`,
+  "nike.com": (q) =>
+    `https://www.nike.com/w?q=${encodeURIComponent(q)}&vst=${encodeURIComponent(q)}`,
+  "adidas.com": (q) =>
+    `https://www.adidas.com/us/search?q=${encodeURIComponent(q)}`,
+  "wish.com": (q) => `https://www.wish.com/search/${encodeURIComponent(q)}`,
+}
 
-STEP 2 — FIND THE PRODUCT
-- Use the site's search bar to search for "${query}"
-- Click on the first relevant product result
-- Record the exact displayed price — this is the basePrice
+function getKnownSearchUrl(domain: string, query: string): string | null {
+  const clean = domain.replace(/^www\./, "")
+  const fn = KNOWN_SEARCH_URLS[clean]
+  return fn ? fn(query) : null
+}
 
-STEP 3 — ANALYSE THE PRODUCT PAGE (critical — do this before adding to cart)
-- Study the product title and brand name. Generic names like "Portable LED Light" or unbranded items are dropship signals.
-- Look at product images. Stock photos or images identical to AliExpress listings are dropship signals.
-- Read the reviews section thoroughly:
-  * Are reviews suspiciously similar in phrasing?
-  * Do many reviews mention receiving the product for free or in exchange for a review?
-  * Are there clusters of 5-star reviews on the same dates?
-  * Do review profiles look like new or fake accounts?
-- Based on price point, branding, and product type, estimate if this is sourced from AliExpress/Alibaba wholesale
-
-STEP 4 — ADD TO CART AND REACH CHECKOUT
-- Click "Add to Cart" or equivalent
-- Navigate to the cart / checkout page
-- Do NOT fill in payment details or complete the purchase
-- On the checkout page:
-  * List EVERY line item and fee shown
-  * Check for pre-checked boxes (insurance, protection plans, rush delivery, subscriptions)
-  * Note if the total is higher than the product page price
-  * Look for auto-renewal or subscription language in fine print
-
-STEP 5 — RETURN RESULTS
-Complete Steps 3 and 4. Only stop early if:
-- A login wall is blocking checkout and you cannot proceed past it — return what you found up to that point
-- You have failed the same CAPTCHA more than 3 times in a row with no progress
-- You have been completely stuck on the exact same page for more than 8 consecutive actions with no new information
-
-Do NOT give up just because a page is slow, has a popup, or requires an extra click. Push through.
-
-═══ RETURN EXACTLY THIS JSON ═══
-{
-  "basePrice": "exact price shown on the product page e.g. $19.99",
-  "junkFeesRemoved": [
-    {
-      "name": "exact fee name as displayed e.g. Shipping Protection",
-      "amount": "exact amount e.g. $3.99",
-      "description": "one sentence: why this fee is deceptive e.g. Pre-checked insurance added silently without user consent"
-    }
-  ],
-  "finalPrice": "the true price after removing all junk fees",
-  "productImageUrl": "the absolute URL of the main product image shown on the product listing page (src attribute of the largest product photo), or null if not found",
-  "trustScore": <integer 0-100: 90-100=trustworthy genuine reviews, 50-89=mixed signals, 0-49=fake or incentivised reviews detected>,
-  "fakeReviewsDetected": <true if you saw fake/incentivised review signals, false if reviews appear genuine>,
-  "productOrigin": {
-    "isDropshipped": <true if likely sourced from AliExpress/Alibaba wholesale, false if appears to be a legitimate brand>,
-    "wholesalePriceEstimate": "your honest estimate of the wholesale cost e.g. $2.50 or N/A if legitimate brand",
-    "markupPercentage": "calculated markup e.g. 700% or N/A if legitimate brand",
-    "likelySourcedFrom": "e.g. AliExpress / Alibaba or Appears to be a legitimate branded product",
-    "analysis": "2-3 sentences with specific observations that support your assessment — cite the product title, images, brand, or review patterns you observed"
-  },
-  "screenshotUrl": null
-}`
-
-// ── Core runner ───────────────────────────────────────────────────────────────
-
-async function runAgent(
+async function buildSitePlan(
   url: string,
+  domain: string,
   query: string,
-  profile: BrowserProfile,
-  onLog: (message: string, level: LogLevel) => void,
-  timers: ReturnType<typeof setTimeout>[],
-  onStreamUrl?: (url: string) => void,
-): Promise<SanitizationResult> {
-  let realProgressReceived = false
-  const clearTimers = () => { for (const t of timers) clearTimeout(t) }
+  onLog: (msg: string, level: LogLevel) => void
+): Promise<SitePlan> {
+  const homepage = isHomepageUrl(url)
 
-  const client = new TinyFish()
-  const stream = await client.agent.stream({
-    url,
-    goal: GOAL(url, query),
-    browser_profile: profile,
-    proxy_config: { enabled: true, country_code: ProxyCountryCode.US },
-  })
+  try {
+    onLog(`GPT-4o building plan for ${domain}...`, "vision")
+    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
 
-  for await (const event of stream) {
-    if (event.type === 'STREAMING_URL') {
-      if (onStreamUrl) {
-        onStreamUrl(event.streaming_url)
-        onLog('Live browser stream active — agent working...', 'info')
-      }
-    } else if (event.type === 'PROGRESS') {
-      if (!realProgressReceived) {
-        realProgressReceived = true
-        clearTimers()
-      }
-      onLog(event.purpose, 'action')
-    } else if (event.type === 'COMPLETE') {
-      clearTimers()
-      const result = event.result as unknown as SanitizationResult
-      const savings = computeSavings(result)
+    const res = await openai.chat.completions.create({
+      model: "gpt-4o",
+      messages: [
+        {
+          role: "user",
+          content: `You are an e-commerce expert with detailed knowledge of ${domain}.
+
+The user wants to scan for hidden fees when buying: "${query}"
+Starting URL: ${url}
+Is this a homepage: ${homepage}
+
+Answer:
+1. Exact text on the Add to Cart button on ${domain}?
+2. Does ${domain} require login BEFORE the cart drawer appears? (true/false)
+3. What hidden fees or pre-checked add-ons does ${domain} commonly add?
+4. ${homepage ? `Best search URL on ${domain} for "${query}"? (full https:// URL)` : `The URL is already a product page — return it as-is: ${url}`}
+
+Return ONLY valid JSON:
+{
+  "cartButtonLabel": "exact button text",
+  "requiresLoginForCart": false,
+  "knownFees": ["fee name: how it appears"],
+  "productSearchUrl": "full URL"
+}`,
+        },
+      ],
+      response_format: { type: "json_object" },
+      temperature: 0.1,
+      max_tokens: 500,
+    })
+
+    const parsed = JSON.parse(res.choices[0].message.content!) as {
+      cartButtonLabel?: string
+      requiresLoginForCart?: boolean
+      knownFees?: string[]
+      productSearchUrl?: string
+    }
+
+    const fees = parsed.knownFees ?? []
+    const productUrl = parsed.productSearchUrl?.startsWith("http")
+      ? parsed.productSearchUrl
+      : homepage
+        ? (getKnownSearchUrl(domain, query) ?? url)
+        : url
+
+    if (homepage && productUrl !== url) {
       onLog(
-        savings
-          ? `Agent done — ${result.junkFeesRemoved?.length ?? 0} fee(s) found, saved ${savings}`
-          : `Agent done — true price: ${result.finalPrice}`,
-        'success',
+        `Starting on search page: ${new URL(productUrl).pathname}`,
+        "vision"
       )
-      return result
+    }
+    if (fees.length > 0) {
+      onLog(
+        `Known patterns on ${domain}: ${fees.slice(0, 2).join(" · ")}`,
+        "vision"
+      )
+    }
+    if (parsed.requiresLoginForCart) {
+      onLog(`${domain} requires login before cart — skipping cart scan`, "info")
+    }
+
+    return {
+      productUrl,
+      isHomepage: homepage,
+      cartButtonLabel: parsed.cartButtonLabel ?? "Add to Cart",
+      knownFees: fees,
+      requiresLoginForCart: parsed.requiresLoginForCart ?? false,
+    }
+  } catch {
+    const fallbackUrl = homepage
+      ? (getKnownSearchUrl(domain, query) ?? url)
+      : url
+    onLog(
+      fallbackUrl !== url
+        ? `Site plan unavailable — using known search URL for ${domain}`
+        : "Site plan unavailable — using original URL",
+      "info"
+    )
+    return {
+      productUrl: fallbackUrl,
+      isHomepage: homepage,
+      cartButtonLabel: "Add to Cart",
+      knownFees: [],
+      requiresLoginForCart: false,
     }
   }
-
-  clearTimers()
-  throw new Error('TinyFish stream ended without COMPLETE event')
 }
 
-function hasUsefulData(r: SanitizationResult): boolean {
-  return !!(r?.basePrice || r?.finalPrice || (r?.junkFeesRemoved?.length ?? 0) > 0)
+// ── GPT-4o retailer intelligence fallback ─────────────────────────────────────
+// Only runs when Playwright found nothing — uses training-data knowledge.
+
+async function getRetailerIntelligence(
+  domain: string,
+  query: string,
+  knownFees: string[],
+  onLog: (msg: string, level: LogLevel) => void
+): Promise<JunkFee[]> {
+  if (knownFees.length > 0) {
+    onLog(
+      `Using retailer intelligence: ${knownFees.length} known fee pattern(s) for ${domain}`,
+      "warn"
+    )
+    return knownFees.map((f) => ({
+      name: f.split(":")[0]?.trim() ?? f,
+      amount: f.match(/\$[\d.]+/)?.[0] ?? "varies",
+      description: f,
+    }))
+  }
+  try {
+    onLog(`Querying fee database for ${domain}...`, "vision")
+    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+    const res = await openai.chat.completions.create({
+      model: "gpt-4o",
+      messages: [
+        {
+          role: "user",
+          content: `What hidden fees or junk charges does ${domain} add to orders for "${query}"? Only list ones you are CONFIDENT exist.
+Return ONLY valid JSON — empty array if nothing certain:
+{ "knownFees": [{ "name": "...", "amount": "typical amount", "description": "how it is hidden or auto-added" }] }`,
+        },
+      ],
+      response_format: { type: "json_object" },
+      temperature: 0.1,
+      max_tokens: 250,
+    })
+    const parsed = JSON.parse(res.choices[0].message.content!) as {
+      knownFees?: JunkFee[]
+    }
+    const fees = parsed.knownFees ?? []
+    if (fees.length > 0)
+      onLog(
+        `${fees.length} known fee pattern(s) confirmed for ${domain}`,
+        "warn"
+      )
+    return fees
+  } catch {
+    return []
+  }
 }
 
-// ── Public entry ──────────────────────────────────────────────────────────────
+// ── Merge fee lists, deduplicating by name ─────────────────────────────────────
+
+function mergeFeeLists(fees: JunkFee[]): JunkFee[] {
+  const seen = new Set<string>()
+  return fees.filter((f) => {
+    const key = f.name.toLowerCase().trim()
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+}
+
+// ── Public entry point ─────────────────────────────────────────────────────────
+//
+// Flow:
+//   1. GPT-4o builds site plan (fast, ~3s)
+//   2. Playwright browser + GPT-4o page analysis run in parallel
+//   3. If nothing found, GPT-4o retailer intelligence fills the gap
+//
 
 export async function cleanCart(
   url: string,
   query: string,
-  onLog: (message: string, level: LogLevel) => void,
-  onStreamUrl: (url: string) => void,
+  onLog: (msg: string, level: LogLevel) => void,
+  _onStreamUrl: (url: string) => void, // kept for API compatibility
+  onScreenshot?: (dataUrl: string) => void
 ): Promise<SanitizationResult> {
-  // Start scripted fallback logs — cancelled as soon as real PROGRESS events arrive
+  // Start scripted logs — they stop automatically once real logs start
   const logTimers: ReturnType<typeof setTimeout>[] = []
+  let realProgressReceived = false
+
   for (const entry of SCRIPTED_LOGS) {
     logTimers.push(
-      setTimeout(() => onLog(entry.message, entry.level), entry.delay),
+      setTimeout(() => {
+        if (!realProgressReceived) onLog(entry.message, entry.level)
+      }, entry.delay)
     )
   }
-  const clearTimers = () => { for (const t of logTimers) clearTimeout(t) }
 
-  // ── Attempt 1: LITE — live browser stream, runs until it genuinely errors ────
-  // No hard timeout — let TinyFish take as long as needed to complete the full
-  // shopping flow. The route's maxDuration = 300 is the real ceiling.
+  const clearTimers = () => {
+    realProgressReceived = true
+    for (const t of logTimers) clearTimeout(t)
+  }
+
+  const wrappedLog = (msg: string, level: LogLevel) => {
+    clearTimers()
+    onLog(msg, level)
+  }
+
+  const domain = new URL(url).hostname.replace("www.", "")
+
   try {
-    const result = await runAgent(url, query, BrowserProfile.LITE, onLog, logTimers, onStreamUrl)
-    if (hasUsefulData(result)) return result
-    throw new Error('LITE returned no usable data')
+    // ── Step 1: Site plan (GPT-4o, ~3s) ──────────────────────────────────────
+    const sitePlan = await buildSitePlan(url, domain, query, wrappedLog)
+
+    // ── Step 2: Playwright scan + page analysis in parallel ───────────────────
+    const [pageAnalysis, playwrightResult] = await Promise.all([
+      analyzeProductPage(sitePlan.productUrl, query, (msg) =>
+        wrappedLog(msg, "info")
+      ),
+      runPlaywrightScan(sitePlan, query, wrappedLog, onScreenshot),
+    ])
+
+    // ── Step 3: keep output strictly evidence-based ───────────────────────────
+    const browserFoundFees = playwrightResult.cartFees.length > 0
+    const retailerFees: JunkFee[] = []
+    if (!browserFoundFees && !playwrightResult.cartDrawerReached) {
+      wrappedLog(
+        `Could not verify cart details on ${domain} (likely bot protection). Skipping synthetic fee guesses.`,
+        "warn"
+      )
+    }
+
+    clearTimers()
+
+    // ── Merge all fee sources ─────────────────────────────────────────────────
+    const allFees = mergeFeeLists([
+      ...playwrightResult.cartFees,
+      ...retailerFees,
+    ])
+
+    // Product image: Playwright DOM extraction → og:image/JSON-LD fallback
+    const productImageUrl =
+      playwrightResult.productImageUrl ??
+      pageAnalysis.productImageUrl ??
+      undefined
+
+    let basePriceSource: SanitizationResult["basePriceSource"] =
+      pageAnalysis.basePrice && pageAnalysis.basePrice !== "unknown"
+        ? "page-analysis"
+        : playwrightResult.listedPrice &&
+            playwrightResult.listedPrice !== "unknown"
+          ? "playwright"
+          : undefined
+
+    let basePrice =
+      pageAnalysis.basePrice ?? playwrightResult.listedPrice ?? "unknown"
+
+    let basePriceConfidence: SanitizationResult["basePriceConfidence"] =
+      basePriceSource === "playwright"
+        ? "high"
+        : basePriceSource === "page-analysis"
+          ? "medium"
+          : undefined
+
+    if (!basePrice || basePrice === "unknown") {
+      const fallback = await resolvePriceWithAiWebFallback(
+        query,
+        domain,
+        (msg) => wrappedLog(msg, "action")
+      )
+      if (fallback.price) {
+        basePrice = fallback.price
+        basePriceSource = "ai-web-fallback"
+        basePriceConfidence = fallback.confidence
+        wrappedLog(
+          `Price fallback found ${fallback.price}${fallback.sourceUrl ? ` from ${new URL(fallback.sourceUrl).hostname}` : ""}.`,
+          "success"
+        )
+      } else {
+        wrappedLog(
+          "Price fallback could not confirm an exact item price from web evidence.",
+          "warn"
+        )
+      }
+    }
+
+    const finalPrice = playwrightResult.cartTotal ?? basePrice
+
+    const savings = allFees.reduce(
+      (sum, f) => sum + parseFloat(f.amount.replace(/[^0-9.]/g, "") || "0"),
+      0
+    )
+
+    onLog(
+      savings > 0
+        ? `Scan complete — ${allFees.length} fee(s) found, $${savings.toFixed(2)} stripped`
+        : `Scan complete — no hidden fees detected (base price: ${basePrice})`,
+      "success"
+    )
+
+    return {
+      basePrice,
+      basePriceSource,
+      basePriceConfidence,
+      finalPrice,
+      junkFeesRemoved: allFees,
+      productImageUrl,
+      productUrl: sitePlan.productUrl !== url ? sitePlan.productUrl : undefined,
+      trustScore: pageAnalysis.trustScore,
+      fakeReviewsDetected: pageAnalysis.fakeReviewsDetected,
+      productOrigin: pageAnalysis.productOrigin,
+    }
   } catch (err) {
     clearTimers()
-    const reason = err instanceof Error ? err.message : 'unknown error'
-    onLog(`Lite browser hit an error (${reason}) — switching to stealth...`, 'warn')
+    throw err
   }
-
-  // ── Attempt 2: STEALTH — only reached if LITE actually threw, not just slow ──
-  onLog('Stealth browser launching — agent will complete the scan...', 'action')
-  try {
-    return await runAgent(url, query, BrowserProfile.STEALTH, onLog, [], undefined)
-  } catch (err) {
-    const reason = err instanceof Error ? err.message : 'unknown'
-    onLog(`Stealth agent could not complete (${reason}) — returning partial data`, 'warn')
-    return { basePrice: 'unknown', junkFeesRemoved: [], finalPrice: 'unknown' }
-  }
-}
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-function computeSavings(result: SanitizationResult): string | null {
-  try {
-    const fees = (result.junkFeesRemoved ?? []).reduce(
-      (sum, f) => sum + parseFloat(f.amount.replace(/[^0-9.]/g, '') || '0'),
-      0,
-    )
-    if (fees > 0) return `$${fees.toFixed(2)}`
-  } catch {}
-  return null
 }

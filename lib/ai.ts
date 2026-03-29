@@ -1,9 +1,16 @@
-import { GoogleGenerativeAI } from '@google/generative-ai'
-import OpenAI from 'openai'
-import { generateText } from 'ai'
-import { openai as openaiSDK } from '@ai-sdk/openai'
-import type { PageSnapshot, ScanResult, SanitizationResult, TrustScore, EthicalAnalysis, ActionRecommendation } from './types'
-import { fetchPagePlain, getRedditSentiment } from './browser'
+import { GoogleGenerativeAI } from "@google/generative-ai"
+import OpenAI from "openai"
+import { generateText } from "ai"
+import { openai as openaiSDK } from "@ai-sdk/openai"
+import type {
+  PageSnapshot,
+  ScanResult,
+  SanitizationResult,
+  TrustScore,
+  EthicalAnalysis,
+  ActionRecommendation,
+} from "./types"
+import { fetchPagePlain, getRedditSentiment } from "./browser"
 
 // ── AI Provider ───────────────────────────────────────────────────────────────
 const USE_OPENAI = true
@@ -12,10 +19,10 @@ const USE_OPENAI = true
 
 export function extractText(html: string): string {
   return html
-    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
-    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/\s+/g, ' ')
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
     .trim()
     .slice(0, 8000)
 }
@@ -27,14 +34,14 @@ export function extractTimers(html: string): string[] {
 
 export function extractSocialProof(html: string): string[] {
   const matches = html.match(
-    /\d[\d,]*\s*(people|person|viewer|customer|buyer|shopper|watching|viewing|bought|sold|added|left)[^<]{0,80}/gi,
+    /\d[\d,]*\s*(people|person|viewer|customer|buyer|shopper|watching|viewing|bought|sold|added|left)[^<]{0,80}/gi
   )
   return matches ? matches.slice(0, 5) : []
 }
 
 export function extractScarcity(html: string): string[] {
   const matches = html.match(
-    /(only\s+\d+\s+(left|remaining|in stock)|limited\s+(stock|supply|availability)|\d+\s+(item|unit|piece)s?\s+(left|remaining))[^<]{0,80}/gi,
+    /(only\s+\d+\s+(left|remaining|in stock)|limited\s+(stock|supply|availability)|\d+\s+(item|unit|piece)s?\s+(left|remaining))[^<]{0,80}/gi
   )
   return matches ? matches.slice(0, 5) : []
 }
@@ -45,10 +52,12 @@ export function extractPrices(html: string): string[] {
 }
 
 export function extractCTAText(html: string): string[] {
-  const buttonMatches = html.match(/<button[^>]*>([^<]{2,60})<\/button>/gi) ?? []
-  const submitMatches = html.match(/type=["']submit["'][^>]*value=["']([^"']{2,60})["']/gi) ?? []
+  const buttonMatches =
+    html.match(/<button[^>]*>([^<]{2,60})<\/button>/gi) ?? []
+  const submitMatches =
+    html.match(/type=["']submit["'][^>]*value=["']([^"']{2,60})["']/gi) ?? []
   const text = [...buttonMatches, ...submitMatches]
-    .map((m) => m.replace(/<[^>]+>/g, '').trim())
+    .map((m) => m.replace(/<[^>]+>/g, "").trim())
     .filter((t) => t.length > 1)
   return [...new Set(text)].slice(0, 10)
 }
@@ -58,26 +67,58 @@ export function extractElementSnippets(html: string): string[] {
   const snippets: string[] = []
 
   const add = (match: string) => {
-    const cleaned = match.replace(/\s+/g, ' ').trim()
+    const cleaned = match.replace(/\s+/g, " ").trim()
     if (cleaned.length > 10 && cleaned.length < 500 && !seen.has(cleaned)) {
       seen.add(cleaned)
       snippets.push(cleaned)
     }
   }
 
-  ;(html.match(/<[a-z][^>]*>[^<]*\d{1,2}:\d{2}(?::\d{2})?[^<]*<\/[a-z]+>/gi) ?? []).forEach(add)
-  ;(html.match(/<[^>]*class="[^"]*(?:countdown|timer|clock)[^"]*"[^>]*>[\s\S]{0,300}?<\/[a-z]+>/gi) ?? []).forEach(add)
-  ;(html.match(/<[a-z][^>]*>[^<]*(?:only \d+\s*(?:left|remaining)|limited stock|low stock|last \d+\s+(?:item|unit))[^<]*<\/[a-z]+>/gi) ?? []).forEach(add)
-  ;(html.match(/<[a-z][^>]*>[^<]*\d+\s*(?:people|person|viewers?|customers?)\s*(?:viewing|watching|bought|looking|added)[^<]*<\/[a-z]+>/gi) ?? []).forEach(add)
-  ;(html.match(/<[a-z][^>]*>[^<]*(?:act now|don't miss|limited time|selling fast|hurry)[^<]*<\/[a-z]+>/gi) ?? []).forEach(add)
-  ;(html.match(/<[^>]*class="[^"]*(?:badge|tag|label|sale|offer)[^"]*"[^>]*>[^<]*<\/[a-z]+>/gi) ?? []).forEach(add)
-  ;(html.match(/<(?:s|strike|del)[^>]*>[^<]*\$[^<]+<\/(?:s|strike|del)>/gi) ?? []).forEach(add)
-  ;(html.match(/<[a-z][^>]*>[^<]*no[,\s]+thanks[^<]*<\/[a-z]+>/gi) ?? []).forEach(add)
+  ;(
+    html.match(/<[a-z][^>]*>[^<]*\d{1,2}:\d{2}(?::\d{2})?[^<]*<\/[a-z]+>/gi) ??
+    []
+  ).forEach(add)
+  ;(
+    html.match(
+      /<[^>]*class="[^"]*(?:countdown|timer|clock)[^"]*"[^>]*>[\s\S]{0,300}?<\/[a-z]+>/gi
+    ) ?? []
+  ).forEach(add)
+  ;(
+    html.match(
+      /<[a-z][^>]*>[^<]*(?:only \d+\s*(?:left|remaining)|limited stock|low stock|last \d+\s+(?:item|unit))[^<]*<\/[a-z]+>/gi
+    ) ?? []
+  ).forEach(add)
+  ;(
+    html.match(
+      /<[a-z][^>]*>[^<]*\d+\s*(?:people|person|viewers?|customers?)\s*(?:viewing|watching|bought|looking|added)[^<]*<\/[a-z]+>/gi
+    ) ?? []
+  ).forEach(add)
+  ;(
+    html.match(
+      /<[a-z][^>]*>[^<]*(?:act now|don't miss|limited time|selling fast|hurry)[^<]*<\/[a-z]+>/gi
+    ) ?? []
+  ).forEach(add)
+  ;(
+    html.match(
+      /<[^>]*class="[^"]*(?:badge|tag|label|sale|offer)[^"]*"[^>]*>[^<]*<\/[a-z]+>/gi
+    ) ?? []
+  ).forEach(add)
+  ;(
+    html.match(/<(?:s|strike|del)[^>]*>[^<]*\$[^<]+<\/(?:s|strike|del)>/gi) ??
+    []
+  ).forEach(add)
+  ;(
+    html.match(/<[a-z][^>]*>[^<]*no[,\s]+thanks[^<]*<\/[a-z]+>/gi) ?? []
+  ).forEach(add)
 
   return snippets.slice(0, 10)
 }
 
-export function buildSnapshot(url: string, html1: string, html2: string): PageSnapshot {
+export function buildSnapshot(
+  url: string,
+  html1: string,
+  html2: string
+): PageSnapshot {
   return {
     url,
     text_visit_1: extractText(html1),
@@ -183,12 +224,14 @@ PRICES found: ${JSON.stringify(snapshot.prices)}
 CTA button text: ${JSON.stringify(snapshot.cta_text)}
 
 ELEMENT SNIPPETS (raw HTML elements from the page likely containing dark patterns):
-${snapshot.element_snippets.length > 0 ? snapshot.element_snippets.map((s, i) => `[${i}] ${s}`).join('\n') : '(none found)'}`
+${snapshot.element_snippets.length > 0 ? snapshot.element_snippets.map((s, i) => `[${i}] ${s}`).join("\n") : "(none found)"}`
 }
 
 // ── Main entry ────────────────────────────────────────────────────────────────
 
-export async function analyzeSnapshot(snapshot: PageSnapshot): Promise<ScanResult> {
+export async function analyzeSnapshot(
+  snapshot: PageSnapshot
+): Promise<ScanResult> {
   if (USE_OPENAI) return analyzeWithOpenAI(snapshot)
   return analyzeWithGemini(snapshot)
 }
@@ -197,16 +240,16 @@ export async function analyzeSnapshot(snapshot: PageSnapshot): Promise<ScanResul
 
 async function analyzeWithOpenAI(snapshot: PageSnapshot): Promise<ScanResult> {
   const { text } = await generateText({
-    model: openaiSDK('gpt-4o'),
+    model: openaiSDK("gpt-4o"),
     system: PROMPT,
     prompt: buildDataContext(snapshot),
     temperature: 0.1,
   })
 
   try {
-    return JSON.parse(text.replace(/```json|```/g, '').trim()) as ScanResult
+    return JSON.parse(text.replace(/```json|```/g, "").trim()) as ScanResult
   } catch {
-    return { risk_score: 0, verdict: 'clean', patterns: [] }
+    return { risk_score: 0, verdict: "clean", patterns: [] }
   }
 }
 
@@ -214,9 +257,14 @@ async function analyzeWithOpenAI(snapshot: PageSnapshot): Promise<ScanResult> {
 
 async function analyzeWithGemini(snapshot: PageSnapshot): Promise<ScanResult> {
   const genai = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!)
-  const model = genai.getGenerativeModel({ model: 'gemini-2.5-flash' })
-  const response = await model.generateContent(`${PROMPT}\n\n${buildDataContext(snapshot)}`)
-  const text = response.response.text().replace(/```json|```/g, '').trim()
+  const model = genai.getGenerativeModel({ model: "gemini-2.5-flash" })
+  const response = await model.generateContent(
+    `${PROMPT}\n\n${buildDataContext(snapshot)}`
+  )
+  const text = response.response
+    .text()
+    .replace(/```json|```/g, "")
+    .trim()
   return JSON.parse(text) as ScanResult
 }
 
@@ -226,112 +274,213 @@ export async function getTrustScore(
   domain: string,
   onLog: (msg: string) => void,
   onStreamUrl?: (url: string) => void,
-  onTrustCheck?: (source: string, status: 'scanning' | 'done' | 'failed', finding?: string) => void,
+  onTrustCheck?: (
+    source: string,
+    status: "scanning" | "done" | "failed",
+    finding?: string
+  ) => void,
+  productQuery?: string, // passed to Reddit for product-aware search
+  onBrowserScreenshot?: (
+    dataUrl: string,
+    label: string,
+    streamId?: string
+  ) => void
 ): Promise<TrustScore> {
   const signalTexts: string[] = []
   const sources_checked: string[] = []
+  const domainName = domain.replace(/^www\./, "").split(".")[0]
 
   const SOURCES = [
-    { key: 'Trustpilot',   url: `https://www.trustpilot.com/review/${domain}` },
-    { key: 'Sitejabber',   url: `https://www.sitejabber.com/reviews/${domain}` },
-    { key: 'ScamAdviser',  url: `https://www.scamadviser.com/check-website/${domain}` },
+    { key: "Trustpilot", url: `https://www.trustpilot.com/review/${domain}` },
+    { key: "Sitejabber", url: `https://www.sitejabber.com/reviews/${domain}` },
+    {
+      key: "ScamAdviser",
+      url: `https://www.scamadviser.com/check-website/${domain}`,
+    },
+    {
+      key: "BBB",
+      url: `https://www.bbb.org/search?find_country=USA&find_text=${encodeURIComponent(domain)}`,
+    },
+    {
+      key: "ResellerRatings",
+      url: `https://www.resellerratings.com/store/${domainName}`,
+    },
   ]
 
-  // Mark all sources as scanning immediately so the UI shows all pills at once
-  for (const src of SOURCES) onTrustCheck?.(src.key, 'scanning')
-  onTrustCheck?.('Reddit', 'scanning')
-  onTrustCheck?.('GPT-4o Analysis', 'scanning')
+  const WEB_REVIEW_QUERY_URL = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(`${domain} reviews complaints experiences`)}`
 
-  // Fetch review sites (plain fetch) + Reddit (TinyFish STEALTH) in parallel
-  const [tp, sj, sa, reddit] = await Promise.allSettled([
+  // Mark all sources as scanning immediately so the UI shows all pills at once
+  for (const src of SOURCES) onTrustCheck?.(src.key, "scanning")
+  onTrustCheck?.("Web Review Snippets", "scanning")
+  onTrustCheck?.("Reddit", "scanning")
+  onTrustCheck?.("GPT-4o Analysis", "scanning")
+
+  // Fetch review sites (plain fetch) + Reddit (Playwright) in parallel
+  const [tp, sj, sa, bbb, rr, webSnippets, reddit] = await Promise.allSettled([
     fetchPagePlain(SOURCES[0].url),
     fetchPagePlain(SOURCES[1].url),
     fetchPagePlain(SOURCES[2].url),
-    getRedditSentiment(domain, onLog, onStreamUrl),
+    fetchPagePlain(SOURCES[3].url),
+    fetchPagePlain(SOURCES[4].url),
+    fetchPagePlain(WEB_REVIEW_QUERY_URL),
+    getRedditSentiment(domain, onLog, productQuery, onBrowserScreenshot),
   ])
 
   // Process plain-fetch review sites
-  const settled = [tp, sj, sa]
+  const settled = [tp, sj, sa, bbb, rr]
   for (let i = 0; i < SOURCES.length; i++) {
     const src = SOURCES[i]
     const result = settled[i]
-    if (result.status === 'fulfilled') {
+    if (result.status === "fulfilled") {
       const text = extractText(result.value).slice(0, 2500)
       // Quick star rating extraction for the finding label
-      const stars = result.value.match(/(\d\.\d)\s*(out of\s*)?(\d\s*stars?|\/\s*\d)/i)
-      const finding = stars ? `${stars[1]}★ found` : 'data retrieved'
+      const stars = result.value.match(
+        /(\d\.\d)\s*(out of\s*)?(\d\s*stars?|\/\s*\d)/i
+      )
+      const finding = stars ? `${stars[1]}★ found` : "data retrieved"
       signalTexts.push(`[${src.key}]\n${text}`)
       sources_checked.push(src.url)
-      onTrustCheck?.(src.key, 'done', finding)
+      onTrustCheck?.(src.key, "done", finding)
     } else {
       sources_checked.push(`${src.url} (unavailable)`)
-      onTrustCheck?.(src.key, 'failed', 'blocked or unavailable')
+      onTrustCheck?.(src.key, "failed", "blocked or unavailable")
     }
   }
 
-  // Process Reddit
-  if (reddit.status === 'fulfilled') {
-    const parsed = JSON.parse(reddit.value) as Record<string, unknown>
-    const sentiment = (parsed.overallSentiment as string) ?? 'unknown'
-    const scam = parsed.scamReports ? ' · scam reports found' : ''
-    const posts = parsed.postCount ? ` · ${parsed.postCount} posts` : ''
+  // Process DuckDuckGo snippets as an additional external sentiment source
+  if (webSnippets.status === "fulfilled") {
+    const snippets = [
+      ...webSnippets.value.matchAll(
+        /<a[^>]*class="[^"]*result__a[^"]*"[^>]*>([^<]{8,140})<\/a>[\s\S]{0,320}?<a[^>]*class="[^"]*result__snippet[^"]*"[^>]*>([\s\S]*?)<\/a>/g
+      ),
+    ]
+      .slice(0, 4)
+      .map((m) => {
+        const title = m[1]
+          .replace(/<[^>]+>/g, "")
+          .replace(/&amp;/g, "&")
+          .replace(/&#x27;/g, "'")
+          .trim()
+        const snip = m[2]
+          .replace(/<[^>]+>/g, " ")
+          .replace(/&amp;/g, "&")
+          .replace(/&#x27;/g, "'")
+          .replace(/\s+/g, " ")
+          .trim()
+        return `${title} — ${snip}`
+      })
+      .filter((s) => s.length > 20)
+
+    if (snippets.length > 0) {
+      signalTexts.push(`[Web review snippets]\n${snippets.join("\n")}`)
+      sources_checked.push(WEB_REVIEW_QUERY_URL)
+      onTrustCheck?.(
+        "Web Review Snippets",
+        "done",
+        `${snippets.length} snippets`
+      )
+    } else {
+      sources_checked.push(`${WEB_REVIEW_QUERY_URL} (no snippets)`)
+      onTrustCheck?.("Web Review Snippets", "failed", "no snippets extracted")
+    }
+  } else {
+    sources_checked.push(`${WEB_REVIEW_QUERY_URL} (unavailable)`)
+    onTrustCheck?.("Web Review Snippets", "failed", "blocked or unavailable")
+  }
+
+  // Process Reddit — extract quotes and post URLs
+  let redditKeyQuotes: string[] = []
+  let redditPostUrls: string[] = []
+  if (reddit.status === "fulfilled") {
+    const r = JSON.parse(reddit.value) as Record<string, unknown>
+    const sentiment = (r.overallSentiment as string) ?? "unknown"
+    const scam = r.scamReports ? " · scam reports found" : ""
+    const posts = r.postCount ? ` · ${r.postCount} posts` : ""
+    redditKeyQuotes = (r.keyQuotes as string[] | undefined) ?? []
+    redditPostUrls = (r.postUrls as string[] | undefined) ?? []
     signalTexts.push(`[Reddit community]\n${reddit.value}`)
     sources_checked.push(`reddit.com/search?q=${domain}+reviews`)
-    onTrustCheck?.('Reddit', 'done', `${sentiment}${scam}${posts}`)
+    onTrustCheck?.("Reddit", "done", `${sentiment}${scam}${posts}`)
   } else {
-    sources_checked.push('reddit.com (unavailable)')
-    onTrustCheck?.('Reddit', 'failed', 'blocked or unavailable')
+    sources_checked.push("reddit.com (unavailable)")
+    onTrustCheck?.("Reddit", "failed", "blocked or unavailable")
   }
 
   const trustPrompt = `You are a website trust analyst. Assess the trustworthiness of the domain "${domain}".
 
-${signalTexts.length > 0 ? `Data from review platforms and Reddit:\n\n${signalTexts.join('\n\n')}` : `No external review data was available. Use your training knowledge about "${domain}".`}
+${signalTexts.length > 0 ? `Data from review platforms and Reddit:\n\n${signalTexts.join("\n\n")}` : `No external review data was available. Use your training knowledge about "${domain}".`}
 
 Return ONLY valid JSON — no markdown, no backticks:
 {
   "trust_score": <integer 0-100, where 80-100=trusted, 60-79=caution, 30-59=suspicious, 0-29=dangerous>,
   "verdict": <"trusted" | "caution" | "suspicious" | "dangerous">,
-  "signals": [<2-4 short bullet strings of specific evidence from the review data or reasoning>]
+  "signals": [<2-4 short bullet strings of specific evidence from the review data>],
+  "keyQuotes": [<up to 3 direct verbatim quotes from the review data that best prove your verdict — real user words, max 140 chars each>]
 }`
 
-  let parsed: Omit<TrustScore, 'sources_checked'>
+  let parsed: Omit<TrustScore, "sources_checked">
 
   if (USE_OPENAI) {
     const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
     const res = await openai.chat.completions.create({
-      model: 'gpt-4o',
-      messages: [{ role: 'user', content: trustPrompt }],
-      response_format: { type: 'json_object' },
+      model: "gpt-4o",
+      messages: [{ role: "user", content: trustPrompt }],
+      response_format: { type: "json_object" },
       temperature: 0.1,
     })
-    parsed = JSON.parse(res.choices[0].message.content!) as Omit<TrustScore, 'sources_checked'>
+    parsed = JSON.parse(res.choices[0].message.content!) as Omit<
+      TrustScore,
+      "sources_checked"
+    >
   } else {
     const genai = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!)
-    const model = genai.getGenerativeModel({ model: 'gemini-2.5-flash' })
+    const model = genai.getGenerativeModel({ model: "gemini-2.5-flash" })
     const response = await model.generateContent(trustPrompt)
-    const text = response.response.text().replace(/```json|```/g, '').trim()
-    parsed = JSON.parse(text) as Omit<TrustScore, 'sources_checked'>
+    const text = response.response
+      .text()
+      .replace(/```json|```/g, "")
+      .trim()
+    parsed = JSON.parse(text) as Omit<TrustScore, "sources_checked">
   }
 
-  onTrustCheck?.('GPT-4o Analysis', 'done', `${parsed.verdict} · ${parsed.trust_score}/100`)
+  // Merge Reddit quotes with any GPT-4o extracted quotes — deduplicate
+  const allQuotes = [
+    ...new Set([
+      ...redditKeyQuotes,
+      ...((parsed as TrustScore).keyQuotes ?? []),
+    ]),
+  ]
+    .filter(Boolean)
+    .slice(0, 4)
+
+  onTrustCheck?.(
+    "GPT-4o Analysis",
+    "done",
+    `${parsed.verdict} · ${parsed.trust_score}/100`
+  )
   onLog(`Trust assessment: ${parsed.verdict} (score: ${parsed.trust_score})`)
-  return { ...parsed, sources_checked }
+  return {
+    ...parsed,
+    sources_checked,
+    keyQuotes: allQuotes,
+    sourceUrls: redditPostUrls,
+  }
 }
 
 // ── Ethical analysis ──────────────────────────────────────────────────────────
 
 const POLICY_PAGE_CANDIDATES = [
-  ['/privacy-policy', '/privacy', '/legal/privacy'],
-  ['/terms-of-service', '/terms', '/legal/terms', '/tos'],
-  ['/about', '/about-us', '/sustainability', '/ethics'],
+  ["/privacy-policy", "/privacy", "/legal/privacy"],
+  ["/terms-of-service", "/terms", "/legal/terms", "/tos"],
+  ["/about", "/about-us", "/sustainability", "/ethics"],
 ]
 
 export async function getEthicalAnalysis(
   baseUrl: string,
   mainPageText: string,
-  onLog: (msg: string) => void,
+  onLog: (msg: string) => void
 ): Promise<EthicalAnalysis> {
-  onLog('Fetching policy pages for ethical analysis...')
+  onLog("Fetching policy pages for ethical analysis...")
   const pages_checked: string[] = []
   const pageSections: string[] = [`[Main page]\n${mainPageText.slice(0, 2000)}`]
 
@@ -352,10 +501,58 @@ export async function getEthicalAnalysis(
   }
 
   if (pages_checked.length === 0) {
-    onLog('  ↳ Policy pages unavailable — ethical analysis from AI knowledge only')
+    onLog("  ↳ Policy pages unavailable — checking external sources...")
   }
 
-  const domain = new URL(baseUrl).hostname.replace('www.', '')
+  const domain = new URL(baseUrl).hostname.replace("www.", "")
+
+  // ── DuckDuckGo news: ethics/labor headlines ─────────────────────────────────
+  // html.duckduckgo.com/html/ is the no-JS fallback — plain HTTP accessible.
+  let newsHeadlines = ""
+  try {
+    const ddgUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(domain + " labor practices ethics controversy")}&df=y`
+    const ddgHtml = await fetchPagePlain(ddgUrl)
+    const headlines = [
+      ...ddgHtml.matchAll(
+        /<a[^>]*class="[^"]*result__a[^"]*"[^>]*>([^<]{5,120})<\/a>/g
+      ),
+    ]
+      .slice(0, 4)
+      .map((m) =>
+        m[1]
+          .replace(/&#x27;/g, "'")
+          .replace(/&amp;/g, "&")
+          .trim()
+      )
+      .filter((h) => h.length > 10)
+    if (headlines.length > 0) {
+      newsHeadlines = headlines.join("\n")
+      onLog(`  ↳ ${headlines.length} ethics news headline(s) found`)
+    }
+  } catch {
+    /* DDG unavailable — continue without news */
+  }
+
+  // ── Good On You sustainability rating (best-effort) ──────────────────────────
+  // Will fail for most brands due to Cloudflare — falls through silently.
+  let goodOnYouText = ""
+  try {
+    const slug = domain
+      .replace(/\.(com|co\.uk|net|org|io)$/, "")
+      .replace(/\./g, "-")
+    const goyHtml = await fetchPagePlain(
+      `https://good-on-you.eco/brands/${slug}/`
+    )
+    if (
+      !goyHtml.includes("Just a moment") &&
+      !goyHtml.includes("cf-browser-verification")
+    ) {
+      goodOnYouText = extractText(goyHtml).slice(0, 800)
+      onLog("  ↳ Good On You rating fetched")
+    }
+  } catch {
+    /* blocked — skip */
+  }
 
   const ethicsPrompt = `You are an ethical business analyst reviewing the website "${domain}".
 
@@ -368,7 +565,9 @@ Analyse the following page content for ethical concerns across these categories:
 - Consumer Rights: unfair return policies, difficult cancellation, targeting vulnerable groups
 
 PAGE CONTENT:
-${pageSections.join('\n\n---\n\n')}
+${pageSections.join("\n\n---\n\n")}
+${newsHeadlines ? `\n\nRECENT NEWS / MEDIA (labor & ethics):\n${newsHeadlines}` : ""}
+${goodOnYouText ? `\n\nGOOD ON YOU SUSTAINABILITY RATING:\n${goodOnYouText}` : ""}
 
 Rules:
 1. Only flag genuine, evidenced concerns — not speculation
@@ -389,26 +588,34 @@ Return ONLY valid JSON — no markdown, no backticks:
   ]
 }`
 
-  let parsed: Omit<EthicalAnalysis, 'pages_checked'>
+  let parsed: Omit<EthicalAnalysis, "pages_checked">
 
   if (USE_OPENAI) {
     const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
     const res = await openai.chat.completions.create({
-      model: 'gpt-4o',
-      messages: [{ role: 'user', content: ethicsPrompt }],
-      response_format: { type: 'json_object' },
+      model: "gpt-4o",
+      messages: [{ role: "user", content: ethicsPrompt }],
+      response_format: { type: "json_object" },
       temperature: 0.1,
     })
-    parsed = JSON.parse(res.choices[0].message.content!) as Omit<EthicalAnalysis, 'pages_checked'>
+    parsed = JSON.parse(res.choices[0].message.content!) as Omit<
+      EthicalAnalysis,
+      "pages_checked"
+    >
   } else {
     const genai = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!)
-    const model = genai.getGenerativeModel({ model: 'gemini-2.5-flash' })
+    const model = genai.getGenerativeModel({ model: "gemini-2.5-flash" })
     const response = await model.generateContent(ethicsPrompt)
-    const text = response.response.text().replace(/```json|```/g, '').trim()
-    parsed = JSON.parse(text) as Omit<EthicalAnalysis, 'pages_checked'>
+    const text = response.response
+      .text()
+      .replace(/```json|```/g, "")
+      .trim()
+    parsed = JSON.parse(text) as Omit<EthicalAnalysis, "pages_checked">
   }
 
-  onLog(`Ethical analysis: ${parsed.overall} — ${parsed.concerns.length} concern(s) found`)
+  onLog(
+    `Ethical analysis: ${parsed.overall} — ${parsed.concerns.length} concern(s) found`
+  )
   return { ...parsed, pages_checked }
 }
 
@@ -418,9 +625,9 @@ export async function getActionRecommendation(
   url: string,
   productQuery: string,
   scanResult: ScanResult,
-  onLog: (msg: string) => void,
+  onLog: (msg: string) => void
 ): Promise<ActionRecommendation> {
-  onLog('Building action recommendation...')
+  onLog("Building action recommendation...")
 
   const origin = scanResult.checkoutAnalysis
   const checkout = scanResult.checkoutAnalysis
@@ -428,18 +635,34 @@ export async function getActionRecommendation(
   const patterns = scanResult.patterns
   const visual = scanResult.visualDarkPatterns
 
-  const domain = (() => { try { return new URL(url).hostname.replace('www.', '') } catch { return url } })()
+  const domain = (() => {
+    try {
+      return new URL(url).hostname.replace("www.", "")
+    } catch {
+      return url
+    }
+  })()
 
   const context = `
 Site: ${domain}
-Product searched: "${productQuery || 'unspecified'}"
+Product searched: "${productQuery || "unspecified"}"
 Risk score: ${scanResult.risk_score}/100
-Trust verdict: ${trust?.verdict ?? 'unknown'}
-Critical patterns detected: ${patterns.filter(p => p.severity === 'critical').map(p => p.pattern).join(', ') || 'none'}
-Hidden fees: ${checkout?.hiddenFeesDetected ? `yes — product ${checkout.productPrice} vs checkout ${checkout.checkoutTotal}` : 'none detected'}
-Pre-checked add-ons: ${checkout?.preCheckedItems.join(', ') || 'none'}
-Trust signals: ${trust?.signals.slice(0, 2).join(' | ') || 'none'}
-Visual patterns: ${visual?.visualPatterns.slice(0, 2).map(p => p.type).join(', ') || 'none'}
+Trust verdict: ${trust?.verdict ?? "unknown"}
+Critical patterns detected: ${
+    patterns
+      .filter((p) => p.severity === "critical")
+      .map((p) => p.pattern)
+      .join(", ") || "none"
+  }
+Hidden fees: ${checkout?.hiddenFeesDetected ? `yes — product ${checkout.productPrice} vs checkout ${checkout.checkoutTotal}` : "none detected"}
+Pre-checked add-ons: ${checkout?.preCheckedItems.join(", ") || "none"}
+Trust signals: ${trust?.signals.slice(0, 2).join(" | ") || "none"}
+Visual patterns: ${
+    visual?.visualPatterns
+      .slice(0, 2)
+      .map((p) => p.type)
+      .join(", ") || "none"
+  }
 `.trim()
 
   const prompt = `You are DarkWatch, an AI shopping bodyguard. Based on this scan, decide the ONE action the user should take.
@@ -451,30 +674,41 @@ Rules:
 - If trust is OK but there are junk fees or pre-checked add-ons → verdict "sketchy", recommend stripping fees
 - If everything looks fine → verdict "safe", confirm it's safe to buy
 
-Build a competitor/direct URL only if you have strong confidence it exists. Use a real search URL like https://www.amazon.com/s?k=<query> or https://www.aliexpress.com/w/wholesale-<query>.html using the product query.
+If the verdict is "skip", recommend the BEST alternative marketplace for this product type:
+- Electronics / gadgets → https://www.amazon.com/s?k=<encoded-query>
+- Fashion / apparel / accessories → https://www.amazon.com/s?k=<encoded-query> or https://www.temu.com/search_result.html?search_key=<encoded-query>
+- Home goods → https://www.amazon.com/s?k=<encoded-query> or https://www.wayfair.com/keyword.php?keyword=<encoded-query>
+- Handmade / jewellery → https://www.etsy.com/search?q=<encoded-query>
+- Wholesale / bulk → https://www.aliexpress.com/wholesale?SearchText=<encoded-query>
+- General → https://www.amazon.com/s?k=<encoded-query>
+Use null for ctaUrl if verdict is "safe" or "sketchy" (just describe the fees to avoid).
 
 Return ONLY valid JSON:
 {
   "verdict": "safe" | "sketchy" | "skip",
   "headline": "one punchy finding, max 50 chars, e.g. '540% markup on a $2 product'",
   "topFindings": ["2-3 short bullet strings, each under 60 chars"],
-  "ctaLabel": "action button text, e.g. 'Buy direct for $2.50 →' or 'Strip $9.98 in fees →' or 'Safe to checkout →'",
+  "ctaLabel": "action button text, e.g. 'Buy on Amazon →' or 'Strip $9.98 in fees →' or 'Safe to checkout →'",
   "ctaUrl": "full URL or null",
-  "ctaSubtext": "one line of context under the button, e.g. 'Amazon · usually ships in 2 days'"
+  "ctaSubtext": "one line naming platform + benefit, e.g. 'Amazon · ships in 2 days, no hidden fees'"
 }`
 
   const { text } = await generateText({
-    model: openaiSDK('gpt-4o-mini'),
+    model: openaiSDK("gpt-4o-mini"),
     prompt,
     temperature: 0.2,
   })
 
-  const parsed = JSON.parse(text.replace(/```json|```/g, '').trim()) as ActionRecommendation
+  const parsed = JSON.parse(
+    text.replace(/```json|```/g, "").trim()
+  ) as ActionRecommendation
 
   // Attach the most compelling screenshot if we have one
   const topScreenshot =
-    visual?.visualPatterns.find(p => p.evidenceScreenshot && p.severity === 'critical')?.evidenceScreenshot ??
-    visual?.visualPatterns.find(p => p.evidenceScreenshot)?.evidenceScreenshot
+    visual?.visualPatterns.find(
+      (p) => p.evidenceScreenshot && p.severity === "critical"
+    )?.evidenceScreenshot ??
+    visual?.visualPatterns.find((p) => p.evidenceScreenshot)?.evidenceScreenshot
 
   if (topScreenshot) parsed.evidenceScreenshot = topScreenshot
 
@@ -482,20 +716,20 @@ Return ONLY valid JSON:
   return parsed
 }
 
-// ── Synthesise action recommendation from TinyFish SanitizationResult ─────────
+// ── Synthesise action recommendation from SanitizationResult ─────────
 // Called after the cart-clean agent finishes — GPT-4o synthesises the verdict.
 
 export async function synthesiseAction(
   s: SanitizationResult,
   query: string,
-  onLog: (msg: string) => void,
+  onLog: (msg: string) => void
 ): Promise<ActionRecommendation> {
-  onLog('GPT-4o synthesising verdict...')
+  onLog("GPT-4o synthesising verdict...")
 
   const fees = s.junkFeesRemoved ?? []
   const totalSaved = fees.reduce(
-    (sum, f) => sum + parseFloat(f.amount.replace(/[^0-9.]/g, '') || '0'),
-    0,
+    (sum, f) => sum + parseFloat(f.amount.replace(/[^0-9.]/g, "") || "0"),
+    0
   )
 
   const prompt = `You are DarkWatch, an AI shopping protection agent. Based on this shopping analysis, produce one clear, honest verdict for the user.
@@ -506,20 +740,22 @@ Advertised price: ${s.basePrice}
 True price (after fees removed): ${s.finalPrice}
 Junk fees found: ${
     fees.length > 0
-      ? fees.map(f => `• ${f.name} (${f.amount}): ${f.description}`).join('\n')
-      : 'none'
+      ? fees
+          .map((f) => `• ${f.name} (${f.amount}): ${f.description}`)
+          .join("\n")
+      : "none"
   }
 Total fees stripped: $${totalSaved.toFixed(2)}
 
-Review trust score: ${s.trustScore ?? 'unknown'}/100
-Fake/incentivised reviews: ${s.fakeReviewsDetected ? 'YES — detected' : 'no'}
+Review trust score: ${s.trustScore ?? "unknown"}/100
+Fake/incentivised reviews: ${s.fakeReviewsDetected ? "YES — detected" : "no"}
 
 Product origin analysis:
-- Likely dropshipped: ${s.productOrigin?.isDropshipped ? 'YES' : 'no'}
-- Wholesale price estimate: ${s.productOrigin?.wholesalePriceEstimate ?? 'unknown'}
-- Retail markup: ${s.productOrigin?.markupPercentage ?? 'unknown'}
-- Sourced from: ${s.productOrigin?.likelySourcedFrom ?? 'unknown'}
-- Agent analysis: ${s.productOrigin?.analysis ?? 'N/A'}
+- Likely dropshipped: ${s.productOrigin?.isDropshipped ? "YES" : "no"}
+- Wholesale price estimate: ${s.productOrigin?.wholesalePriceEstimate ?? "unknown"}
+- Retail markup: ${s.productOrigin?.markupPercentage ?? "unknown"}
+- Sourced from: ${s.productOrigin?.likelySourcedFrom ?? "unknown"}
+- Agent analysis: ${s.productOrigin?.analysis ?? "N/A"}
 
 ═══ VERDICT RULES ═══
 "skip" → massive markup (>200%) from a wholesale source, OR multiple junk fees PLUS fake reviews, OR clearly untrustworthy site
@@ -527,11 +763,19 @@ Product origin analysis:
 "safe" → no meaningful concerns — product appears legitimate, reviews genuine, no hidden fees
 
 ═══ OUTPUT RULES ═══
-- headline: single most important finding, punchy, max 55 chars (e.g. "700% markup on a $2 AliExpress item")
+- headline: single most important finding, punchy, max 55 chars
 - topFindings: 2-3 specific bullets, each under 70 chars
-- ctaLabel: clear action e.g. "Buy direct for $3.50 →" or "Safe to buy →" or "Strip $8 in fees →"
-- ctaUrl: for dropshipped items use https://www.aliexpress.com/wholesale?SearchText=${encodeURIComponent(query)} — otherwise null
-- ctaSubtext: one short line of context e.g. "AliExpress · same product, 85% cheaper" or "No junk fees detected"
+- ctaLabel: clear action e.g. "Buy on Amazon →" or "Safe to buy →" or "Strip $8 in fees →"
+- ctaUrl: for dropshipped/overpriced items, pick the BEST alternative marketplace based on product type:
+    • Electronics / gadgets → https://www.amazon.com/s?k=<encoded-query>
+    • Fashion / apparel / accessories → https://www.amazon.com/s?k=<encoded-query> OR https://www.temu.com/search_result.html?search_key=<encoded-query>
+    • Home goods / furniture → https://www.amazon.com/s?k=<encoded-query> OR https://www.wayfair.com/keyword.php?keyword=<encoded-query>
+    • Handmade / unique / jewellery → https://www.etsy.com/search?q=<encoded-query>
+    • Budget / everyday items → https://www.amazon.com/s?k=<encoded-query>
+    • Wholesale / bulk → https://www.aliexpress.com/wholesale?SearchText=<encoded-query>
+    • General → https://www.amazon.com/s?k=<encoded-query>
+  Use null if the product is fine where it is.
+- ctaSubtext: one short line naming the platform and the benefit e.g. "Amazon · ships in 2 days, no hidden fees" or "Etsy · handmade, better price"
 
 Return ONLY valid JSON, no markdown:
 {
@@ -545,14 +789,16 @@ Return ONLY valid JSON, no markdown:
 
   const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
   const res = await openai.chat.completions.create({
-    model: 'gpt-4o',
-    messages: [{ role: 'user', content: prompt }],
-    response_format: { type: 'json_object' },
+    model: "gpt-4o",
+    messages: [{ role: "user", content: prompt }],
+    response_format: { type: "json_object" },
     temperature: 0.1,
     max_tokens: 400,
   })
 
-  const parsed = JSON.parse(res.choices[0].message.content!) as ActionRecommendation
+  const parsed = JSON.parse(
+    res.choices[0].message.content!
+  ) as ActionRecommendation
   if (s.screenshotUrl) parsed.evidenceScreenshot = s.screenshotUrl
 
   // Attach the product image so the UI can show a thumbnail next to the "buy here instead" CTA
