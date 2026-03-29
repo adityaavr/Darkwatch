@@ -1,5 +1,5 @@
-import { chromium } from "playwright"
-import type { Browser } from "playwright"
+import { chromium } from "playwright-core"
+import type { Browser } from "playwright-core"
 
 type LaunchOptions = {
   args?: string[]

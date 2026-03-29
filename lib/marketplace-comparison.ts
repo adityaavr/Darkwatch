@@ -6,7 +6,7 @@
  * If a site blocks automation, marks it as unavailable (no guessed prices).
  */
 
-import type { Browser, Page } from "playwright"
+import type { Browser, Page } from "playwright-core"
 import OpenAI from "openai"
 import type { MarketplaceComparison, MarketplaceResult } from "./types"
 import { planMarketplaceRecovery } from "./automation-router"

@@ -10,7 +10,7 @@
  * Plain HTTP (fetchPagePlain) is still used for static pages (trust sites, policy pages).
  */
 
-import type { Page, Browser } from "playwright"
+import type { Page, Browser } from "playwright-core"
 import OpenAI from "openai"
 import type { JunkFee, VisualDarkPatterns } from "./types"
 import { launchPlaywrightBrowser } from "./playwright-launch"

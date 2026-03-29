@@ -1,4 +1,4 @@
-import type { Browser, Page } from "playwright"
+import type { Browser, Page } from "playwright-core"
 import type { WholesaleBenchmark, WholesaleBenchmarkResult } from "./types"
 import { launchPlaywrightBrowser } from "./playwright-launch"
 
