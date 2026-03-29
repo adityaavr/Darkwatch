@@ -5,6 +5,35 @@ type LaunchOptions = {
   args?: string[]
 }
 
+let serverlessExecutablePathPromise: Promise<string> | null = null
+
+async function getServerlessExecutablePath(): Promise<string> {
+  if (!serverlessExecutablePathPromise) {
+    serverlessExecutablePathPromise = (async () => {
+      const chromiumPack = await import("@sparticuz/chromium")
+      const path = await chromiumPack.default.executablePath()
+      if (!path) {
+        throw new Error(
+          "Serverless Chromium executable path was not resolved on this runtime."
+        )
+      }
+      return path
+    })()
+  }
+  return serverlessExecutablePathPromise
+}
+
+function mergeArgs(primary: string[], secondary: string[]): string[] {
+  const out: string[] = []
+  const seen = new Set<string>()
+  for (const a of [...primary, ...secondary]) {
+    if (seen.has(a)) continue
+    seen.add(a)
+    out.push(a)
+  }
+  return out
+}
+
 export async function launchPlaywrightBrowser(
   options?: LaunchOptions
 ): Promise<Browser> {
@@ -18,14 +47,8 @@ export async function launchPlaywrightBrowser(
 
   if (shouldUseServerlessChromium) {
     const chromiumPack = await import("@sparticuz/chromium")
-    const executablePath = await chromiumPack.default.executablePath()
-    const args = [...chromiumPack.default.args, ...extraArgs]
-
-    if (!executablePath) {
-      throw new Error(
-        "Serverless Chromium executable path was not resolved on this runtime."
-      )
-    }
+    const executablePath = await getServerlessExecutablePath()
+    const args = mergeArgs(chromiumPack.default.args, extraArgs)
 
     return chromium.launch({
       headless: true,
