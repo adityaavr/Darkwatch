@@ -1,12 +1,21 @@
 import { DM_Sans, DM_Mono, Barlow_Condensed } from "next/font/google"
+import type { Metadata } from "next"
 
 import "./globals.css"
 import { ThemeProvider } from "@/components/theme-provider"
-import { cn } from "@/lib/utils";
+import { cn } from "@/lib/utils"
+
+export const metadata: Metadata = {
+  icons: {
+    icon: "/icon.svg",
+    shortcut: "/icon.svg",
+    apple: "/icon.svg",
+  },
+}
 
 const dmSans = DM_Sans({
-  subsets: ['latin'],
-  variable: '--font-sans'
+  subsets: ["latin"],
+  variable: "--font-sans",
 })
 
 const dmMono = DM_Mono({
@@ -30,7 +39,13 @@ export default function RootLayout({
     <html
       lang="en"
       suppressHydrationWarning
-      className={cn("antialiased", dmMono.variable, "font-sans", dmSans.variable, barlowCondensed.variable)}
+      className={cn(
+        "antialiased",
+        dmMono.variable,
+        "font-sans",
+        dmSans.variable,
+        barlowCondensed.variable
+      )}
     >
       <body>
         <ThemeProvider>{children}</ThemeProvider>
