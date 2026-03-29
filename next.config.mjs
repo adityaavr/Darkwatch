@@ -3,11 +3,18 @@ const nextConfig = {
   // Tell Next.js/Turbopack not to bundle these — they're native Node.js packages
   // that must be required at runtime, not compiled by the bundler.
   serverExternalPackages: [
-    'playwright',
-    'playwright-core',
-    'playwright-extra',
-    'puppeteer-extra-plugin-stealth',
+    "playwright",
+    "playwright-core",
+    "playwright-extra",
+    "puppeteer-extra-plugin-stealth",
   ],
+  outputFileTracingIncludes: {
+    "/api/scan": ["./node_modules/playwright-core/.local-browsers/**/*"],
+    "/api/clean-cart": ["./node_modules/playwright-core/.local-browsers/**/*"],
+    "/api/marketplace-retry": [
+      "./node_modules/playwright-core/.local-browsers/**/*",
+    ],
+  },
 }
 
 export default nextConfig
