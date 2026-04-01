@@ -41,7 +41,7 @@ export async function launchPlaywrightBrowser(
   const wsEndpoint = process.env.BROWSERLESS_WS_ENDPOINT?.trim()
 
   if (wsEndpoint) {
-    return chromium.connect(wsEndpoint)
+    return chromium.connect(wsEndpoint, { timeout: 15_000 })
   }
 
   const shouldUseServerlessChromium =

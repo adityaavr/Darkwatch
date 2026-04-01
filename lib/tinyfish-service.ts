@@ -11,6 +11,7 @@ import OpenAI from "openai"
 import { analyzeProductPage } from "./product-analysis"
 import { resolvePriceWithAiWebFallback } from "./price-fallback"
 import { runPlaywrightScan } from "./playwright-service"
+import type { PlaywrightScanResult } from "./playwright-service"
 import type { SanitizationResult, JunkFee } from "./types"
 
 type LogLevel = "info" | "warn" | "action" | "vision" | "success"
@@ -314,11 +315,35 @@ export async function cleanCart(
     const sitePlan = await buildSitePlan(url, domain, query, wrappedLog)
 
     // ── Step 2: Playwright scan + page analysis in parallel ───────────────────
+    // Hard 90s ceiling on Playwright — if the browser hangs (bot detection loop,
+    // Browserless connection stall, slow page), we must not block forever.
+    const PLAYWRIGHT_TIMEOUT = 90_000
+    const playwrightTimeout = new Promise<PlaywrightScanResult>((resolve) =>
+      setTimeout(() => {
+        wrappedLog(
+          "Browser scan timed out — falling back to GPT-4o knowledge",
+          "warn"
+        )
+        resolve({
+          productImageUrl: null,
+          listedPrice: null,
+          cartFees: [],
+          cartTotal: null,
+          cartDrawerReached: false,
+          evidenceScreenshots: [],
+          pageText: "",
+        })
+      }, PLAYWRIGHT_TIMEOUT)
+    )
+
     const [pageAnalysis, playwrightResult] = await Promise.all([
       analyzeProductPage(sitePlan.productUrl, query, (msg) =>
         wrappedLog(msg, "info")
       ),
-      runPlaywrightScan(sitePlan, query, wrappedLog, onScreenshot),
+      Promise.race([
+        runPlaywrightScan(sitePlan, query, wrappedLog, onScreenshot),
+        playwrightTimeout,
+      ]),
     ])
 
     // ── Step 3: keep output strictly evidence-based ───────────────────────────

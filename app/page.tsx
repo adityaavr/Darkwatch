@@ -3171,33 +3171,58 @@ export default function Page() {
                   <AnimatePresence>
                     <motion.div
                       key="live-playwright-multi"
-                      initial={{ opacity: 0, y: 12 }}
+                      initial={{ opacity: 0, y: 16 }}
                       animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0 }}
+                      exit={{ opacity: 0, y: 8 }}
                       transition={{ duration: 0.4, ease: "easeOut" }}
-                      className="mt-4 overflow-hidden rounded-xl border border-[rgba(0,0,0,0.08)] bg-[#0a0a0a]"
+                      className="log-scanline mt-5 overflow-hidden rounded-2xl"
+                      style={{
+                        background: "#080808",
+                        border: "1px solid rgba(255,71,87,0.2)",
+                        boxShadow: "0 0 0 1px rgba(255,71,87,0.08), 0 8px 40px rgba(0,0,0,0.4)",
+                      }}
                     >
-                      <div className="flex items-center gap-2 border-b border-[rgba(255,255,255,0.06)] px-4 py-2">
+                      {/* Header */}
+                      <div className="flex items-center gap-3 border-b border-[rgba(255,255,255,0.05)] px-4 py-2.5">
+                        <ReticleMark size={14} />
                         <span
-                          className="h-2 w-2 shrink-0 animate-pulse rounded-full bg-[#ff4757]"
-                          style={{ boxShadow: "0 0 6px #ff4757" }}
-                        />
-                        <span className="truncate font-mono text-[10px] tracking-widest text-[#9ca3af]">
-                          LIVE PLAYWRIGHT WALL · {liveFeeds.length} AGENT
-                          {liveFeeds.length !== 1 ? "S" : ""}
+                          className="font-black text-white"
+                          style={{ fontFamily: "var(--font-display)", fontSize: "0.8rem", letterSpacing: "0.08em" }}
+                        >
+                          AGENT BROWSER WALL
                         </span>
+                        <div className="ml-2 flex items-center gap-1.5">
+                          {liveFeeds.map((f) => (
+                            <span
+                              key={f.key}
+                              className="h-1.5 w-1.5 animate-pulse rounded-full bg-[#ff4757]"
+                              style={{ animationDelay: `${Math.random() * 0.8}s` }}
+                            />
+                          ))}
+                        </div>
                         <span className="ml-auto font-mono text-[9px] text-[#4b5563]">
-                          REAL-TIME
+                          {liveFeeds.length} STREAM{liveFeeds.length !== 1 ? "S" : ""} · REAL-TIME
                         </span>
                       </div>
-                      <div className="grid grid-cols-1 gap-2 p-2 sm:grid-cols-2">
+
+                      {/* Browser grid */}
+                      <div
+                        className={`grid gap-px bg-[rgba(255,255,255,0.04)] ${
+                          liveFeeds.length === 1
+                            ? "grid-cols-1"
+                            : liveFeeds.length <= 2
+                              ? "grid-cols-2"
+                              : "grid-cols-2 sm:grid-cols-3"
+                        }`}
+                      >
                         {liveFeeds.map((feed) => (
-                          <div
-                            key={feed.key}
-                            className="overflow-hidden rounded-lg border border-[rgba(255,255,255,0.08)]"
-                          >
-                            <div className="truncate border-b border-[rgba(255,255,255,0.06)] px-2 py-1 font-mono text-[9px] tracking-wider text-[#9ca3af]">
-                              {feed.label}
+                          <div key={feed.key} className="relative bg-[#080808]">
+                            {/* Window chrome bar */}
+                            <div className="flex items-center gap-1.5 border-b border-[rgba(255,255,255,0.04)] px-2.5 py-1.5">
+                              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[#ff4757]" style={{ boxShadow: "0 0 4px #ff4757" }} />
+                              <span className="flex-1 truncate font-mono text-[9px] text-[#4b5563]">
+                                {feed.label}
+                              </span>
                             </div>
                             {/* eslint-disable-next-line @next/next/no-img-element */}
                             <img
@@ -3205,9 +3230,16 @@ export default function Page() {
                               alt={feed.label}
                               className="block w-full"
                               style={{
-                                maxHeight: 240,
+                                maxHeight: liveFeeds.length === 1 ? 480 : 220,
                                 objectFit: "cover",
                                 objectPosition: "top",
+                              }}
+                            />
+                            {/* Scan line overlay on each frame */}
+                            <div
+                              className="pointer-events-none absolute inset-0"
+                              style={{
+                                background: "repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.08) 2px, rgba(0,0,0,0.08) 4px)",
                               }}
                             />
                           </div>

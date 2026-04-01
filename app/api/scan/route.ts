@@ -151,24 +151,51 @@ export async function POST(req: NextRequest) {
         })
 
       // ── Main scan: cart agent ─────────────────────────────────────────────
-      const sanitization = await cleanCart(
-        normalizedUrl,
-        query,
-        (message) => send({ type: "log", message }),
-        (streamUrl) =>
-          send({
-            type: "stream_url",
-            url: streamUrl,
-            label: `🛒 CART AGENT · ${domain}`,
-          }),
-        (dataUrl) =>
-          send({
-            type: "browser_screenshot",
-            dataUrl,
-            label: `🔴 LIVE · ${domain}`,
-            streamId: "cart-agent",
-          })
-      )
+      // 120s hard ceiling — if cleanCart hangs for any reason (Browserless stall,
+      // site bot-wall, GPT-4o timeout), we fall through to the GPT synthesis
+      // step and stream a result rather than hanging forever at 5%.
+      const CLEAN_CART_TIMEOUT = 120_000
+      const cleanCartFallback: SanitizationResult = {
+        basePrice: "",
+        basePriceSource: undefined,
+        basePriceConfidence: undefined,
+        junkFeesRemoved: [],
+        finalPrice: "",
+        productImageUrl: undefined,
+        productUrl: normalizedUrl,
+        fakeReviewsDetected: false,
+        productOrigin: undefined,
+      }
+      const sanitization = await Promise.race([
+        cleanCart(
+          normalizedUrl,
+          query,
+          (message) => send({ type: "log", message }),
+          (streamUrl) =>
+            send({
+              type: "stream_url",
+              url: streamUrl,
+              label: `🛒 CART AGENT · ${domain}`,
+            }),
+          (dataUrl) =>
+            send({
+              type: "browser_screenshot",
+              dataUrl,
+              label: `🔴 LIVE · ${domain}`,
+              streamId: "cart-agent",
+            })
+        ),
+        new Promise<SanitizationResult>((resolve) =>
+          setTimeout(() => {
+            send({
+              type: "log",
+              message:
+                "Cart agent timed out — streaming available analysis now",
+            })
+            resolve(cleanCartFallback)
+          }, CLEAN_CART_TIMEOUT)
+        ),
+      ])
 
       // ── Marketplace comparison — needs currentPrice from cleanCart ───────────
       const currentPrice = sanitization.basePrice ?? ""

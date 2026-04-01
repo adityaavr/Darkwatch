@@ -786,7 +786,15 @@ export async function runPlaywrightScan(
   onLog: (msg: string, level: LogLevel) => void,
   onScreenshot?: (dataUrl: string) => void
 ): Promise<PlaywrightScanResult> {
-  const browser = await launchBrowser()
+  onLog("Starting browser session...", "action")
+  // 20s connection timeout — if Browserless/local Chrome doesn't connect, fail fast
+  const browser = await Promise.race([
+    launchBrowser(),
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error("Browser connection timed out after 20s")), 20_000)
+    ),
+  ])
+  onLog("Browser session connected.", "success")
   let screenshotInterval: ReturnType<typeof setInterval> | null = null
 
   try {
@@ -807,6 +815,17 @@ export async function runPlaywrightScan(
           /* page navigating — skip this frame */
         }
       }, 1500)
+
+      try {
+        const first = await page.screenshot({
+          type: "jpeg",
+          quality: 55,
+          timeout: 2000,
+        })
+        onScreenshot(`data:image/jpeg;base64,${first.toString("base64")}`)
+      } catch {
+        // ignore early frame failures while page initializes
+      }
     }
 
     // ── Navigate ──
