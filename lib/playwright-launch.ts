@@ -41,7 +41,10 @@ export async function launchPlaywrightBrowser(
   const wsEndpoint = process.env.BROWSERLESS_WS_ENDPOINT?.trim()
 
   if (wsEndpoint) {
-    return chromium.connect(wsEndpoint, { timeout: 60_000 })
+    // Browserless (and most hosted browser services) expose a CDP endpoint,
+    // not a Playwright server. connectOverCDP is the correct method.
+    // chromium.connect() is for self-hosted Playwright servers only.
+    return chromium.connectOverCDP(wsEndpoint, { timeout: 60_000 })
   }
 
   const shouldUseServerlessChromium =
