@@ -791,7 +791,7 @@ export async function runPlaywrightScan(
   const browser = await Promise.race([
     launchBrowser(),
     new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error("Browser connection timed out after 20s")), 20_000)
+      setTimeout(() => reject(new Error("Browser connection timed out after 65s")), 65_000)
     ),
   ])
   onLog("Browser session connected.", "success")
