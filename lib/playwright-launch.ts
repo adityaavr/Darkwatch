@@ -54,12 +54,6 @@ export async function launchPlaywrightBrowser(
     process.platform === "linux"
 
   if (shouldUseServerlessChromium) {
-    if (process.env.VERCEL === "1") {
-      throw new Error(
-        "Playwright local Chromium is unavailable on this Vercel runtime (missing system libs like libnss3). Set BROWSERLESS_WS_ENDPOINT to a remote browser (Browserless) or run browser jobs on a separate worker service."
-      )
-    }
-
     const chromiumPack = await import("@sparticuz/chromium")
     const executablePath = await getServerlessExecutablePath()
     const args = mergeArgs(chromiumPack.default.args, extraArgs)
