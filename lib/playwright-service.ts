@@ -1165,17 +1165,34 @@ Return ONLY JSON — empty array if nothing new found:
 
 // ── Reddit sentiment ───────────────────────────────────────────────────────────
 
+// Reddit JSON API headers — plain fetch, no browser needed.
+// Reddit's JSON endpoints (/search.json, /comments/.json) are publicly accessible
+// via HTTP when using realistic browser headers. It's only the HTML renderer that
+// challenges headless Chrome.
+const REDDIT_FETCH_HEADERS = {
+  "User-Agent":
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+  Accept: "application/json, text/plain, */*",
+  "Accept-Language": "en-US,en;q=0.9",
+  "Cache-Control": "no-cache",
+  Pragma: "no-cache",
+  "Sec-Fetch-Dest": "empty",
+  "Sec-Fetch-Mode": "cors",
+  "Sec-Fetch-Site": "same-origin",
+  Referer: "https://www.reddit.com/",
+}
+
 export async function getRedditSentiment(
   domain: string,
   onLog: (msg: string, level: LogLevel) => void,
   productQuery?: string,
-  onScreenshot?: (dataUrl: string, label: string, streamId?: string) => void
+  _onScreenshot?: (dataUrl: string, label: string, streamId?: string) => void
 ): Promise<string> {
   onLog(
     `Searching Reddit for "${domain}"${productQuery ? ` + "${productQuery}"` : ""} reviews...`,
     "action"
   )
-  const browser = await launchBrowser()
+
   try {
     type RedditPost = {
       title: string
@@ -1187,80 +1204,35 @@ export async function getRedditSentiment(
     }
     type RedditComment = { body: string; score: number }
 
-    // ── Search helper — each call gets its own page to allow parallel requests ──
+    // ── Search helper — plain fetch, much faster and more reliable than browser ──
     async function searchReddit(q: string, limit = 8): Promise<RedditPost[]> {
-      const pg = await newStealthPage(browser)
       try {
         const url = `https://www.reddit.com/search.json?q=${encodeURIComponent(q)}&sort=relevance&t=year&limit=${limit}&type=link`
-        await pg.goto(url, { waitUntil: "domcontentloaded", timeout: 15_000 })
-        await pg.waitForTimeout(600)
-        if (onScreenshot) {
-          try {
-            const shot = await pg.screenshot({
-              type: "jpeg",
-              quality: 55,
-              timeout: 2000,
-            })
-            onScreenshot(
-              `data:image/jpeg;base64,${shot.toString("base64")}`,
-              "💬 REDDIT AGENT · Search",
-              "reddit-search"
-            )
-          } catch {
-            // no-op
-          }
+        const res = await fetch(url, {
+          headers: REDDIT_FETCH_HEADERS,
+          signal: AbortSignal.timeout(12_000),
+        })
+        if (!res.ok) return []
+        const raw = (await res.json()) as {
+          data?: { children?: Array<{ data: RedditPost }> }
         }
-        const raw = (await pg.evaluate((): unknown => {
-          try {
-            return JSON.parse(document.body.innerText)
-          } catch {
-            return null
-          }
-        })) as { data?: { children?: Array<{ data: RedditPost }> } } | null
         return raw?.data?.children?.map((c) => c.data) ?? []
       } catch {
         return []
-      } finally {
-        await pg
-          .context()
-          .close()
-          .catch(() => {
-            /* ignore */
-          })
       }
     }
 
     async function fetchComments(
       post: RedditPost
     ): Promise<{ comments: string[]; url: string }> {
-      const pg = await newStealthPage(browser)
       try {
         const url = `https://www.reddit.com/r/${post.subreddit}/comments/${post.id}.json?limit=20&depth=1`
-        await pg.goto(url, { waitUntil: "domcontentloaded", timeout: 12_000 })
-        await pg.waitForTimeout(500)
-        if (onScreenshot) {
-          try {
-            const shot = await pg.screenshot({
-              type: "jpeg",
-              quality: 55,
-              timeout: 2000,
-            })
-            onScreenshot(
-              `data:image/jpeg;base64,${shot.toString("base64")}`,
-              `💬 REDDIT AGENT · r/${post.subreddit}`,
-              "reddit-comments"
-            )
-          } catch {
-            // no-op
-          }
-        }
-        const raw = (await pg.evaluate((): unknown => {
-          try {
-            return JSON.parse(document.body.innerText)
-          } catch {
-            return null
-          }
-        })) as Array<{
+        const res = await fetch(url, {
+          headers: REDDIT_FETCH_HEADERS,
+          signal: AbortSignal.timeout(10_000),
+        })
+        if (!res.ok) return { comments: [], url: `https://reddit.com${post.permalink}` }
+        const raw = (await res.json()) as Array<{
           data?: { children?: Array<{ kind: string; data: RedditComment }> }
         }> | null
         const comments = (raw?.[1]?.data?.children ?? [])
@@ -1278,13 +1250,6 @@ export async function getRedditSentiment(
         return { comments, url: `https://reddit.com${post.permalink}` }
       } catch {
         return { comments: [], url: `https://reddit.com${post.permalink}` }
-      } finally {
-        await pg
-          .context()
-          .close()
-          .catch(() => {
-            /* ignore */
-          })
       }
     }
 
@@ -1388,6 +1353,141 @@ Return ONLY valid JSON — no markdown:
       fakeProductComplaints: false,
       postCount: 0,
     })
+  }
+}
+
+// ── Google Shopping price scout ────────────────────────────────────────────────
+// Second browser panel: navigates Google Shopping for the product query,
+// extracts competitor prices, streams screenshots to the browser wall.
+// This gives real market price context that exposes overcharging.
+
+export type PriceScoutResult = {
+  priceRange: { low: string; high: string } | null
+  listings: Array<{ store: string; price: string }>
+  screenshotDataUrl: string | null
+}
+
+export async function getPriceScout(
+  query: string,
+  onLog: (msg: string, level: LogLevel) => void,
+  onScreenshot?: (dataUrl: string, label: string, streamId?: string) => void
+): Promise<PriceScoutResult> {
+  onLog(`Opening Bing Shopping for "${query}"...`, "action")
+  const browser = await launchBrowser()
+  try {
+    const page = await newStealthPage(browser)
+
+    // Bing Shopping — far less bot-protected than Google Shopping
+    const searchUrl = `https://www.bing.com/shop?q=${encodeURIComponent(query)}&setlang=en-US`
+    await page.goto(searchUrl, { waitUntil: "domcontentloaded", timeout: 20_000 })
+
+    // Wait for product cards
+    await page
+      .waitForSelector(".br-item, .slide, [data-bm], .b_algo", { timeout: 6_000 })
+      .catch(() => {/* different UI — continue anyway */})
+    await page.waitForTimeout(1_000)
+
+    // Screenshot
+    if (onScreenshot) {
+      try {
+        const shot = await page.screenshot({ type: "jpeg", quality: 70, timeout: 3_000 })
+        onScreenshot(
+          `data:image/jpeg;base64,${shot.toString("base64")}`,
+          `🛍️ PRICE SCOUT · Bing Shopping`,
+          "price-scout"
+        )
+      } catch {
+        /* ignore */
+      }
+    }
+
+    // Extract listings — Bing Shopping price comparison rows
+    // Bing shows a "prices from X sellers" table with merchant name + price per row
+    const listings = await page.evaluate((): Array<{ store: string; price: string }> => {
+      const results: Array<{ store: string; price: string }> = []
+      const pricePattern = /[$£€S$]\s*[\d,]+\.?\d*/  // USD, GBP, EUR, SGD
+
+      // Primary: Bing's offer/merchant rows (shown when you click "X offers")
+      document.querySelectorAll(".br-offerItem, [class*='offerItem'], [class*='offer-item']").forEach((row) => {
+        const priceEl = row.querySelector("[class*='price'], [class*='Price']")
+        const merchantEl = row.querySelector("[class*='merchant'], [class*='store'], [class*='seller'], a")
+        const price = priceEl?.textContent?.trim() ?? ""
+        const store = (merchantEl?.textContent?.trim() ?? "").split("\n")[0].trim()
+        if (price && pricePattern.test(price) && store) {
+          results.push({ store: store.slice(0, 40), price: price.slice(0, 20) })
+        }
+      })
+
+      // Secondary: product grid cards with merchant label
+      if (results.length === 0) {
+        document.querySelectorAll(".br-item, .slide, [class*='ProductCard'], [class*='product-card']").forEach((card) => {
+          const priceEl = card.querySelector("[class*='price'], [class*='Price']")
+          const merchantEl = card.querySelector("[class*='merchant'], [class*='store'], [class*='seller']")
+          const price = priceEl?.textContent?.trim() ?? ""
+          // Prefer explicit merchant; fall back to the link domain
+          let store = merchantEl?.textContent?.trim() ?? ""
+          if (!store) {
+            const link = card.querySelector("a[href]") as HTMLAnchorElement | null
+            if (link?.href) {
+              try { store = new URL(link.href).hostname.replace("www.", "") } catch { /* ignore */ }
+            }
+          }
+          if (price && pricePattern.test(price)) {
+            results.push({ store: (store || "Unknown").slice(0, 40), price: price.slice(0, 20) })
+          }
+        })
+      }
+
+      // Tertiary: find any price-like text and the nearest anchor/heading as store label
+      if (results.length === 0) {
+        const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT)
+        let node: Text | null
+        while ((node = walker.nextNode() as Text | null)) {
+          const text = node.textContent?.trim() ?? ""
+          if (/^[$£€]\s*[\d,]+\.?\d*$/.test(text)) {
+            const container = node.parentElement?.closest("li, article, tr, [class*='item']")
+            const label = container?.querySelector("a[href], [class*='merchant'], [class*='name']")
+            let store = label?.textContent?.trim().split("\n")[0] ?? ""
+            if (!store && (label as HTMLAnchorElement)?.href) {
+              try { store = new URL((label as HTMLAnchorElement).href).hostname.replace("www.", "") } catch { /* ignore */ }
+            }
+            if (store) {
+              results.push({ store: store.slice(0, 40), price: text })
+              if (results.length >= 8) break
+            }
+          }
+        }
+      }
+
+      return results.slice(0, 8)
+    })
+
+    const numericPrices = listings
+      .map((l) => parseFloat(l.price.replace(/[^0-9.]/g, "")))
+      .filter((n) => !isNaN(n) && n > 0)
+      .sort((a, b) => a - b)
+
+    const priceRange =
+      numericPrices.length >= 2
+        ? { low: `$${numericPrices[0].toFixed(2)}`, high: `$${numericPrices[numericPrices.length - 1].toFixed(2)}` }
+        : numericPrices.length === 1
+          ? { low: `$${numericPrices[0].toFixed(2)}`, high: `$${numericPrices[0].toFixed(2)}` }
+          : null
+
+    onLog(
+      listings.length > 0
+        ? `Price scout: ${listings.length} Bing Shopping listings${priceRange ? ` — range ${priceRange.low}–${priceRange.high}` : ""}`
+        : "Price scout: no prices found on Bing Shopping",
+      listings.length > 0 ? "success" : "warn"
+    )
+
+    return { priceRange, listings, screenshotDataUrl: null }
+  } catch (err) {
+    onLog(
+      `Price scout failed: ${err instanceof Error ? err.message : "unknown"}`,
+      "warn"
+    )
+    return { priceRange: null, listings: [], screenshotDataUrl: null }
   } finally {
     await browser.close()
   }

@@ -1,8 +1,8 @@
 import { NextRequest } from "next/server"
 import { cleanCart } from "@/lib/tinyfish-service"
-import { getVisualDarkPatterns } from "@/lib/browser"
+import { getVisualDarkPatterns, getPriceScout } from "@/lib/browser"
 import { synthesiseAction, getTrustScore, getEthicalAnalysis } from "@/lib/ai"
-import { compareMarketplaces } from "@/lib/marketplace-comparison"
+import { compareMarketplaces, retryMarketplaceSlowMode, mergeMarketplaceRetry } from "@/lib/marketplace-comparison"
 import { compareWholesaleBenchmarks } from "@/lib/wholesale-benchmark"
 import type { ScanResult, ScanEvent } from "@/lib/types"
 import type { SanitizationResult } from "@/lib/types"
@@ -38,13 +38,45 @@ export async function POST(req: NextRequest) {
   ) {
     normalizedUrl = "https://" + normalizedUrl
   }
+
+  let parsedUrl: URL
   try {
-    new URL(normalizedUrl)
+    parsedUrl = new URL(normalizedUrl)
   } catch {
-    return new Response(JSON.stringify({ error: "Invalid URL" }), {
-      status: 400,
-      headers: { "Content-Type": "application/json" },
+    return new Response(
+      JSON.stringify({ error: "That doesn't look like a valid URL — try something like amazon.com" }),
+      { status: 400, headers: { "Content-Type": "application/json" } }
+    )
+  }
+
+  // Quick reachability probe — 8 s HEAD request.
+  // Catches non-existent domains and totally dead servers before we spin up browsers.
+  try {
+    await fetch(parsedUrl.origin, {
+      method: "HEAD",
+      signal: AbortSignal.timeout(8_000),
+      redirect: "follow",
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+      },
     })
+  } catch (probeErr) {
+    const msg = probeErr instanceof Error ? probeErr.message : ""
+    const isDns =
+      msg.includes("ENOTFOUND") ||
+      msg.includes("ECONNREFUSED") ||
+      msg.includes("EAI_AGAIN") ||
+      msg.includes("fetch failed") ||
+      msg.includes("UND_ERR")
+    return new Response(
+      JSON.stringify({
+        error: isDns
+          ? `Can't reach ${parsedUrl.hostname} — the domain doesn't exist or isn't responding`
+          : `Site didn't respond in time — check the URL and try again`,
+      }),
+      { status: 422, headers: { "Content-Type": "application/json" } }
+    )
   }
 
   const query: string =
@@ -56,11 +88,22 @@ export async function POST(req: NextRequest) {
   const stream = new TransformStream<Uint8Array, Uint8Array>()
   const writer = stream.writable.getWriter()
 
+  let writerClosed = false
   const send = (event: ScanEvent) => {
-    writer.write(encoder.encode(`data: ${JSON.stringify(event)}\n\n`))
+    if (writerClosed) return
+    try {
+      writer.write(encoder.encode(`data: ${JSON.stringify(event)}\n\n`))
+    } catch {
+      // writer already closed — swallow silently
+    }
   }
 
   ;(async () => {
+    let cleanCartTimeoutId: ReturnType<typeof setTimeout> | null = null
+    const deadlineTimers: ReturnType<typeof setTimeout>[] = []
+    // Resolves when auto-retries complete, keeping the stream alive
+    let resolveAutoRetry: (v: null) => void = () => {}
+    const autoRetryPromise = new Promise<null>((res) => { resolveAutoRetry = res })
     try {
       send({ type: "progress", value: 5 })
 
@@ -68,6 +111,15 @@ export async function POST(req: NextRequest) {
       send({ type: "log", message: `Scanning ${domain}...` })
 
       // ── Background tasks — fire immediately, never block the main result ──
+
+      // Price scout fires NOW so the second browser panel appears while cleanCart runs.
+      // It only needs the product query — no price required.
+      const priceScoutPromise = getPriceScout(
+        query,
+        (msg) => send({ type: "log", message: msg }),
+        (dataUrl, label, streamId) =>
+          send({ type: "browser_screenshot", dataUrl, label, streamId })
+      ).catch(() => null)
 
       const trustPromise = getTrustScore(
         domain,
@@ -184,9 +236,12 @@ export async function POST(req: NextRequest) {
               label: `🔴 LIVE · ${domain}`,
               streamId: "cart-agent",
             })
-        ),
-        new Promise<SanitizationResult>((resolve) =>
-          setTimeout(() => {
+        ).then((r) => {
+          if (cleanCartTimeoutId) clearTimeout(cleanCartTimeoutId)
+          return r
+        }),
+        new Promise<SanitizationResult>((resolve) => {
+          cleanCartTimeoutId = setTimeout(() => {
             send({
               type: "log",
               message:
@@ -194,7 +249,7 @@ export async function POST(req: NextRequest) {
             })
             resolve(cleanCartFallback)
           }, CLEAN_CART_TIMEOUT)
-        ),
+        }),
       ])
 
       // ── Marketplace comparison — needs currentPrice from cleanCart ───────────
@@ -259,7 +314,10 @@ export async function POST(req: NextRequest) {
       const addDeadline = <T>(p: Promise<T | null>) =>
         Promise.race([
           p,
-          new Promise<null>((r) => setTimeout(() => r(null), DEADLINE)),
+          new Promise<null>((r) => {
+            const id = setTimeout(() => r(null), DEADLINE)
+            deadlineTimers.push(id)
+          }),
         ])
 
       trustPromise
@@ -300,8 +358,8 @@ export async function POST(req: NextRequest) {
         .catch(() => null)
 
       marketplacePromise
-        .then((r) => {
-          if (!r) return
+        .then(async (r) => {
+          if (!r) { resolveAutoRetry(null); return }
           const verdict =
             r.currentSiteVerdict === "overpriced"
               ? "⚠ overpriced"
@@ -310,11 +368,51 @@ export async function POST(req: NextRequest) {
                 : "✓ good deal"
           send({
             type: "log",
-            message: `Price comparison: ${r.winner} is best value · ${domain} is ${verdict}`,
+            message: `Price comparison: ${r.winner ? r.winner + " is best value · " : ""}${domain} is ${verdict}`,
           })
           send({ type: "update", data: { marketplaceComparisons: r } })
+
+          // ── Auto-retry blocked / unverified results — no user click needed ──
+          const needsRetry = r.results
+            .filter(
+              (res) =>
+                res.dataConfidence === "blocked" ||
+                res.dataConfidence === "unverified"
+            )
+            .slice(0, 3) // cap: 3 sequential retries max
+
+          if (needsRetry.length > 0) {
+            send({
+              type: "log",
+              message: `Auto-retrying ${needsRetry.length} marketplace${needsRetry.length > 1 ? "s" : ""} in slow mode (${needsRetry.map((x) => x.marketplace).join(", ")})…`,
+            })
+            let curr = r
+            for (const blocked of needsRetry) {
+              try {
+                const retried = await retryMarketplaceSlowMode(
+                  query,
+                  domain,
+                  blocked.marketplace,
+                  (msg) => send({ type: "log", message: msg }),
+                  (dataUrl, label, streamId) =>
+                    send({ type: "browser_screenshot", dataUrl, label, streamId })
+                )
+                if (retried) {
+                  curr = mergeMarketplaceRetry(curr, retried)
+                  send({
+                    type: "log",
+                    message: `  ↳ ${blocked.marketplace}: ${retried.priceRange && retried.priceRange !== "unknown" ? retried.priceRange : "still no price"}`,
+                  })
+                  send({ type: "update", data: { marketplaceComparisons: curr } })
+                }
+              } catch {
+                // skip — failed retry shouldn't block other retries
+              }
+            }
+          }
+          resolveAutoRetry(null)
         })
-        .catch(() => null)
+        .catch(() => { resolveAutoRetry(null) })
 
       wholesalePromise
         .then((r) => {
@@ -324,13 +422,38 @@ export async function POST(req: NextRequest) {
         })
         .catch(() => null)
 
-      // Wait for all (or their deadlines) before closing the stream
+      priceScoutPromise
+        .then((r) => {
+          if (!r || (!r.priceRange && r.listings.length === 0)) return
+          const rangeStr = r.priceRange
+            ? ` — market range ${r.priceRange.low}–${r.priceRange.high}`
+            : ""
+          send({
+            type: "log",
+            message: `Price scout: ${r.listings.length} listings found${rangeStr}`,
+          })
+          send({
+            type: "update",
+            data: {
+              priceScout: {
+                priceRange: r.priceRange,
+                listings: r.listings,
+              },
+            },
+          })
+        })
+        .catch(() => null)
+
+      // Wait for all (or their deadlines) before closing the stream.
+      // autoRetryPromise keeps the stream alive while slow-mode retries run.
       await Promise.all([
         addDeadline(trustPromise),
         addDeadline(ethicsPromise),
         addDeadline(visualPromise),
         addDeadline(marketplacePromise),
         addDeadline(wholesalePromise),
+        addDeadline(priceScoutPromise),
+        addDeadline(autoRetryPromise),
       ])
     } catch (err) {
       send({
@@ -338,6 +461,11 @@ export async function POST(req: NextRequest) {
         message: err instanceof Error ? err.message : "Scan failed",
       })
     } finally {
+      // Cancel all pending timeouts before closing — prevents ERR_INTERNAL_ASSERTION
+      // from dangling setTimeout callbacks writing to a closed stream.
+      if (cleanCartTimeoutId) clearTimeout(cleanCartTimeoutId)
+      for (const id of deadlineTimers) clearTimeout(id)
+      writerClosed = true
       writer.close()
     }
   })()

@@ -24,6 +24,7 @@ import type {
   MarketplaceResult,
   SanitizedReceipt,
   WholesaleBenchmark,
+  PriceScout,
 } from "@/lib/types"
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -189,22 +190,7 @@ const SITE_VERDICT_CFG: Record<
   },
 }
 
-const DATA_CONFIDENCE_CFG: Record<
-  string,
-  { label: string; color: string; bg: string }
-> = {
-  "verified-live": { label: "Verified live", color: GREEN, bg: "#d1fae5" },
-  "verified-user": { label: "Verified by you", color: BLUE, bg: "#dbeafe" },
-  blocked: { label: "Blocked", color: ACCENT, bg: "#fee2e2" },
-  unverified: { label: "Needs retry", color: AMBER, bg: "#fef3c7" },
-}
 
-const RECOVERY_ACTION_LABELS: Record<string, string> = {
-  "retry-slow": "Retry slow mode",
-  "handoff-human": "Handoff to human",
-  "switch-source": "Switch source",
-  defer: "Defer",
-}
 const LOG_LEVEL_LABELS = {
   info: "INFO",
   action: "ACT ",
@@ -277,6 +263,44 @@ function normalizeUrl(input: string) {
   if (!t.startsWith("http://") && !t.startsWith("https://"))
     return "https://" + t
   return t
+}
+
+// Returns an error string if the URL is obviously bad, null if it looks fine.
+function validateUrl(raw: string): string | null {
+  const normalized = normalizeUrl(raw)
+  let parsed: URL
+  try {
+    parsed = new URL(normalized)
+  } catch {
+    return "That doesn't look like a valid URL — try something like amazon.com"
+  }
+
+  const host = parsed.hostname.toLowerCase()
+
+  // Block localhost / private ranges
+  if (
+    host === "localhost" ||
+    host === "127.0.0.1" ||
+    host.startsWith("192.168.") ||
+    host.startsWith("10.") ||
+    host.startsWith("172.16.") ||
+    host === "::1"
+  ) {
+    return "Can't scan local or private addresses"
+  }
+
+  // Must have at least one dot (real TLD)
+  if (!host.includes(".")) {
+    return "Enter a full domain — e.g. shein.com, amazon.co.uk"
+  }
+
+  // TLD must be at least 2 chars and only letters
+  const tld = host.split(".").at(-1) ?? ""
+  if (tld.length < 2 || !/^[a-z]+$/.test(tld)) {
+    return "That doesn't look like a real domain"
+  }
+
+  return null
 }
 
 function getDomain(url: string) {
@@ -871,9 +895,14 @@ function BentoScanCard({
 
         {/* Error */}
         {isError && (
-          <p className="mt-1 font-mono text-xs text-[#ff4757]">
-            Error: {job.error ?? "Scan failed"}
-          </p>
+          <div className="mt-2 rounded-lg border border-[#ff4757]/20 bg-[#ff4757]/5 px-3 py-2.5">
+            <p className="mb-0.5 text-[10px] font-semibold uppercase tracking-wide text-[#ff4757]">
+              Scan failed
+            </p>
+            <p className="text-xs leading-relaxed text-[#6b7280]">
+              {job.error ?? "Something went wrong — check the URL and try again"}
+            </p>
+          </div>
         )}
       </CardContent>
     </Card>
@@ -1070,7 +1099,7 @@ function TrustScoreSection({ data }: { data: TrustScore }) {
             limited · {sourceMix.blocked} blocked
           </p>
           {sourceMix.total > 0 && (
-            <div className="mt-1.5 h-1.5 w-48 overflow-hidden rounded-full bg-[rgba(0,0,0,0.08)]">
+            <div className="mt-1.5 h-1.5 w-full max-w-[12rem] overflow-hidden rounded-full bg-[rgba(0,0,0,0.08)]">
               <div className="flex h-full w-full">
                 <div
                   style={{
@@ -1350,9 +1379,6 @@ function MarketplaceComparisonSection({
   const [overrides, setOverrides] = useState<Record<string, MarketplaceResult>>(
     {}
   )
-  const [retrying, setRetrying] = useState<string | null>(null)
-  const [retryError, setRetryError] = useState<string>("")
-  const [plannerNote, setPlannerNote] = useState<string>("")
   const [manualOpen, setManualOpen] = useState<Record<string, boolean>>({})
   const [manualInput, setManualInput] = useState<
     Record<string, { price: string; screenshot: string }>
@@ -1395,50 +1421,6 @@ function MarketplaceComparisonSection({
   )
 
   const blockedResults = mergedResults.filter((r) => !hasRealPrice(r))
-  const planByMarketplace = Object.fromEntries(
-    (data.recoveryPlans ?? []).map((p) => [p.marketplace, p])
-  )
-  const sourceMix = (() => {
-    const verified = mergedResults.filter(
-      (r) =>
-        r.dataConfidence === "verified-live" ||
-        r.dataConfidence === "verified-user"
-    ).length
-    const blocked = mergedResults.filter(
-      (r) => r.dataConfidence === "blocked"
-    ).length
-    const unverified = mergedResults.filter(
-      (r) => r.dataConfidence === "unverified"
-    ).length
-    return { verified, blocked, unverified, total: mergedResults.length }
-  })()
-
-  const handleRetry = async (marketplace: string) => {
-    setRetryError("")
-    setRetrying(marketplace)
-    try {
-      const res = await fetch("/api/marketplace-retry", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          query: productQuery,
-          currentDomain,
-          marketplace,
-        }),
-      })
-      const payload = await res.json()
-      if (!res.ok) {
-        throw new Error(payload?.error ?? "Retry failed")
-      }
-      const updated = payload?.result as MarketplaceResult | undefined
-      if (!updated) throw new Error("Retry returned no data")
-      setOverrides((prev) => ({ ...prev, [marketplace]: updated }))
-    } catch (err) {
-      setRetryError(err instanceof Error ? err.message : "Retry failed")
-    } finally {
-      setRetrying(null)
-    }
-  }
 
   const submitManualVerify = (marketplace: string) => {
     const source =
@@ -1465,36 +1447,6 @@ function MarketplaceComparisonSection({
       },
     }))
     setManualOpen((prev) => ({ ...prev, [marketplace]: false }))
-  }
-
-  const runRecommendedAction = async (marketplace: string) => {
-    const plan = planByMarketplace[marketplace]
-    if (!plan) return
-    setPlannerNote("")
-
-    if (plan.nextAction === "retry-slow") {
-      await handleRetry(marketplace)
-      return
-    }
-
-    if (plan.nextAction === "handoff-human") {
-      setManualOpen((prev) => ({ ...prev, [marketplace]: true }))
-      setPlannerNote(
-        `${marketplace}: opened manual verification so you can confirm real price.`
-      )
-      return
-    }
-
-    if (plan.nextAction === "switch-source") {
-      setPlannerNote(
-        `${marketplace}: use Open listing or manual verification while source switching is added.`
-      )
-      return
-    }
-
-    setPlannerNote(
-      `${marketplace}: planner suggests defer until source reliability improves.`
-    )
   }
 
   return (
@@ -1525,103 +1477,6 @@ function MarketplaceComparisonSection({
         </p>
       )}
 
-      {sourceMix.total > 0 && (
-        <div className="mb-3 rounded-lg border border-[rgba(0,0,0,0.08)] bg-[#fafaf8] p-2.5">
-          <p className="text-[10px] text-[#6b7280]">
-            Source mix: {sourceMix.verified} verified · {sourceMix.unverified}{" "}
-            unverified · {sourceMix.blocked} blocked
-          </p>
-          <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-[rgba(0,0,0,0.08)]">
-            <div className="flex h-full w-full">
-              <div
-                style={{
-                  width: `${(sourceMix.verified / sourceMix.total) * 100}%`,
-                  backgroundColor: GREEN,
-                }}
-              />
-              <div
-                style={{
-                  width: `${(sourceMix.unverified / sourceMix.total) * 100}%`,
-                  backgroundColor: AMBER,
-                }}
-              />
-              <div
-                style={{
-                  width: `${(sourceMix.blocked / sourceMix.total) * 100}%`,
-                  backgroundColor: "#d1d5db",
-                }}
-              />
-            </div>
-          </div>
-        </div>
-      )}
-
-      {retryError && (
-        <p className="mb-3 text-xs text-[#ff4757]">
-          Retry failed: {retryError}
-        </p>
-      )}
-
-      {plannerNote && (
-        <p className="mb-3 text-xs text-[#3b82f6]">{plannerNote}</p>
-      )}
-
-      {data.recoveryPlans && data.recoveryPlans.length > 0 && (
-        <div className="mb-3 rounded-lg border border-[rgba(0,0,0,0.08)] bg-[#fafaf8] p-3">
-          <p className="mb-2 text-[11px] font-semibold tracking-wide text-[#374151] uppercase">
-            Smart recovery planner
-          </p>
-          <div className="space-y-2">
-            {data.recoveryPlans.map((plan) => (
-              <div
-                key={`${plan.marketplace}-${plan.status}`}
-                className="rounded-md border border-[rgba(0,0,0,0.06)] bg-white p-2"
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-[11px] font-semibold text-[#111111]">
-                    {plan.marketplace}
-                  </span>
-                  <Badge
-                    className="border-0 px-1.5 py-0.5 text-[9px] font-semibold"
-                    style={{ backgroundColor: "#e5e7eb", color: "#4b5563" }}
-                  >
-                    {RECOVERY_ACTION_LABELS[plan.nextAction] ?? plan.nextAction}
-                  </Badge>
-                </div>
-                <p className="mt-1 text-[10px] leading-snug text-[#6b7280]">
-                  {plan.reason}
-                </p>
-                {plan.checklist.length > 0 && (
-                  <p className="mt-1 text-[10px] text-[#9ca3af]">
-                    {plan.checklist.join(" · ")}
-                  </p>
-                )}
-                <div className="mt-2">
-                  <button
-                    type="button"
-                    onClick={() => runRecommendedAction(plan.marketplace)}
-                    className="rounded border border-[rgba(59,130,246,0.35)] px-2 py-1 text-[10px] font-semibold text-[#3b82f6]"
-                  >
-                    Do recommended action
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {orderedResults.length > 0 &&
-        blockedResults.length === orderedResults.length && (
-          <div className="mb-3 flex items-start gap-2 rounded-lg border border-[rgba(0,0,0,0.08)] bg-[#fafaf8] p-3">
-            <span className="text-base">🛡️</span>
-            <p className="text-[11px] leading-relaxed text-[#6b7280]">
-              All marketplace checks hit verification walls. Cards are shown for
-              transparency, but live prices were unavailable.
-            </p>
-          </div>
-        )}
-
       {/* No real data at all */}
       {orderedResults.length === 0 ? (
         <div className="flex items-start gap-3 rounded-lg border border-[rgba(0,0,0,0.08)] bg-[#fafaf8] p-3">
@@ -1646,15 +1501,10 @@ function MarketplaceComparisonSection({
               const vc =
                 MARKETPLACE_VERDICT_CFG[r.verdict] ??
                 MARKETPLACE_VERDICT_CFG["comparable"]
-              const dc =
-                DATA_CONFIDENCE_CFG[r.dataConfidence] ??
-                DATA_CONFIDENCE_CFG["unverified"]
               const isWinner = r.marketplace === computedWinner
               const unavailable = !hasRealPrice(r)
               const shopUrl = r.productPageUrl || r.searchUrl
-              const isRetrying = retrying === r.marketplace
               const showManual = manualOpen[r.marketplace] ?? false
-              const plan = planByMarketplace[r.marketplace]
 
               return (
                 <div key={r.marketplace} className="group block no-underline">
@@ -1708,42 +1558,40 @@ function MarketplaceComparisonSection({
                         </Badge>
                       </div>
 
-                      <div className="mb-1.5">
-                        <Badge
-                          className="border-0 px-1.5 py-0.5 text-[9px] font-semibold"
-                          style={{ backgroundColor: dc.bg, color: dc.color }}
-                        >
-                          {dc.label}
-                        </Badge>
-                      </div>
-
                       {/* Product name */}
-                      {r.topResultName && (
+                      {r.topResultName && !unavailable && (
                         <p className="mb-1.5 line-clamp-2 text-[11px] leading-snug text-[#6b7280]">
                           {r.topResultName.slice(0, 55)}
                         </p>
                       )}
 
-                      {/* Price — big */}
-                      <div className="mb-1 font-mono text-lg leading-tight font-bold text-[#111111]">
-                        {unavailable ? "—" : r.priceRange}
-                      </div>
+                      {/* Price — big, or auto-checking indicator */}
+                      {unavailable ? (
+                        <div className="mb-1 flex items-center gap-1.5">
+                          <span
+                            className="inline-block h-1.5 w-1.5 animate-pulse rounded-full"
+                            style={{ backgroundColor: AMBER }}
+                          />
+                          <span className="font-mono text-sm text-[#9ca3af]">
+                            Auto-checking…
+                          </span>
+                        </div>
+                      ) : (
+                        <div className="mb-1 font-mono text-lg leading-tight font-bold text-[#111111]">
+                          {r.priceRange}
+                        </div>
+                      )}
 
                       {/* Rating + shipping */}
                       <div className="flex flex-wrap gap-2 text-[10px] text-[#9ca3af]">
                         {r.rating && <span>{r.rating}</span>}
-                        {r.shippingNote && <span>{r.shippingNote}</span>}
+                        {r.shippingNote && !unavailable && <span>{r.shippingNote}</span>}
                       </div>
 
-                      {/* Verdict reason */}
-                      {r.verdictReason && (
+                      {/* Verdict reason — only when we have real data */}
+                      {r.verdictReason && !unavailable && (
                         <p className="mt-1.5 border-t border-[rgba(0,0,0,0.05)] pt-1.5 text-[10px] leading-snug text-[#6b7280]">
                           {r.verdictReason}
-                        </p>
-                      )}
-                      {r.dataSourceNote && (
-                        <p className="mt-1 text-[10px] leading-snug text-[#9ca3af]">
-                          {r.dataSourceNote}
                         </p>
                       )}
 
@@ -1757,39 +1605,18 @@ function MarketplaceComparisonSection({
                           Open listing
                         </a>
 
-                        {(r.dataConfidence === "blocked" ||
-                          r.dataConfidence === "unverified") && (
+                        {unavailable && (
                           <button
                             type="button"
-                            onClick={() => handleRetry(r.marketplace)}
-                            disabled={isRetrying}
-                            className="rounded border border-[rgba(255,71,87,0.35)] px-2 py-1 text-[10px] font-semibold text-[#ff4757] disabled:opacity-60"
+                            onClick={() =>
+                              setManualOpen((prev) => ({
+                                ...prev,
+                                [r.marketplace]: !showManual,
+                              }))
+                            }
+                            className="rounded border border-[rgba(59,130,246,0.35)] px-2 py-1 text-[10px] font-semibold text-[#3b82f6]"
                           >
-                            {isRetrying ? "Retrying..." : "Retry slow mode"}
-                          </button>
-                        )}
-
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setManualOpen((prev) => ({
-                              ...prev,
-                              [r.marketplace]: !showManual,
-                            }))
-                          }
-                          className="rounded border border-[rgba(59,130,246,0.35)] px-2 py-1 text-[10px] font-semibold text-[#3b82f6]"
-                        >
-                          Verify manually
-                        </button>
-
-                        {plan && (
-                          <button
-                            type="button"
-                            onClick={() => runRecommendedAction(r.marketplace)}
-                            className="rounded border border-[rgba(16,185,129,0.35)] px-2 py-1 text-[10px] font-semibold text-[#10b981]"
-                          >
-                            Recommended:{" "}
-                            {RECOVERY_ACTION_LABELS[plan.nextAction]}
+                            Enter price manually
                           </button>
                         )}
                       </div>
@@ -2438,6 +2265,84 @@ function WholesaleBenchmarkSection({ data }: { data: WholesaleBenchmark }) {
   )
 }
 
+// ── Bing Shopping price scout ────────────────────────────────────────────────
+
+function cleanStoreName(raw: string): string {
+  // Strip protocol + www., capitalise first letter
+  return raw
+    .replace(/^https?:\/\//i, "")
+    .replace(/^www\./i, "")
+    .split("/")[0]           // drop any path
+    .replace(/\.\w+$/, "")  // drop the TLD for display
+    .replace(/[-_]/g, " ")
+    .replace(/\b\w/g, (c) => c.toUpperCase())
+    .trim() || raw
+}
+
+function PriceScoutSection({ data }: { data: PriceScout }) {
+  if (data.listings.length === 0 && !data.priceRange) return null
+
+  // Deduplicate by domain — keep only the lowest price per store
+  const byStore = new Map<string, { store: string; price: string; numeric: number }>()
+  for (const l of data.listings) {
+    const key = cleanStoreName(l.store)
+    const numeric = parseFloat(l.price.replace(/[^0-9.]/g, ""))
+    if (!isNaN(numeric) && numeric > 0) {
+      const existing = byStore.get(key)
+      if (!existing || numeric < existing.numeric) {
+        byStore.set(key, { store: key, price: l.price, numeric })
+      }
+    }
+  }
+
+  const deduped = Array.from(byStore.values()).sort((a, b) => a.numeric - b.numeric)
+
+  if (deduped.length === 0) return null
+
+  const lowest = deduped[0]
+  const highest = deduped[deduped.length - 1]
+  const rangeLabel = deduped.length > 1
+    ? `${lowest.price} – ${highest.price}`
+    : lowest.price
+
+  return (
+    <div>
+      <h3 className="mb-1 flex items-center gap-2 text-xs font-semibold tracking-wide text-[#6b7280] uppercase">
+        <span className="h-3 w-[2px] rounded-full bg-[#ff4757]" />
+        Web price range
+        <Badge
+          className="ml-auto border-0 text-[10px] font-semibold"
+          style={{ backgroundColor: GREEN + "18", color: GREEN }}
+        >
+          {rangeLabel}
+        </Badge>
+      </h3>
+      <p className="mb-3 text-[11px] text-[#9ca3af]">
+        What other sellers across the web are charging for this product right now.
+      </p>
+      <Card className="overflow-hidden border-[rgba(0,0,0,0.08)] bg-white shadow-none">
+        <CardContent className="p-0">
+          <div className="divide-y divide-[rgba(0,0,0,0.06)]">
+            {deduped.map((l, i) => (
+              <div key={i} className="flex items-center justify-between px-4 py-2.5">
+                <div className="flex items-center gap-2">
+                  {i === 0 && (
+                    <span className="text-[9px] font-bold uppercase tracking-wide" style={{ color: GREEN }}>
+                      Lowest
+                    </span>
+                  )}
+                  <span className="text-xs text-[#374151]">{l.store}</span>
+                </div>
+                <span className="font-mono text-xs font-semibold text-[#111111]">{l.price}</span>
+              </div>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  )
+}
+
 // ── Result Detail ─────────────────────────────────────────────────────────────
 
 function ResultDetail({ job }: { job: ScanJob }) {
@@ -2450,7 +2355,7 @@ function ResultDetail({ job }: { job: ScanJob }) {
 
   return (
     <div
-      className="space-y-4 rounded-2xl border-l-[3px] pl-5"
+      className="space-y-4 rounded-2xl border-l-[3px] pl-3 sm:pl-5"
       style={{ borderColor: verdictColor }}
     >
       {/* ── CONTEXT HEADER — what was scanned ── */}
@@ -2487,7 +2392,7 @@ function ResultDetail({ job }: { job: ScanJob }) {
           )}
         </div>
         {result.productImageUrl && (
-          <div className="h-14 w-14 shrink-0 overflow-hidden rounded-xl border border-[rgba(0,0,0,0.08)] bg-[#f4f4f2]">
+          <div className="hidden h-14 w-14 shrink-0 overflow-hidden rounded-xl border border-[rgba(0,0,0,0.08)] bg-[#f4f4f2] sm:block">
             <img
               src={result.productImageUrl}
               alt="Product"
@@ -2574,6 +2479,10 @@ function ResultDetail({ job }: { job: ScanJob }) {
 
       {result.wholesaleBenchmark && (
         <WholesaleBenchmarkSection data={result.wholesaleBenchmark} />
+      )}
+
+      {result.priceScout && (
+        <PriceScoutSection data={result.priceScout} />
       )}
 
       {/* ── MORE DETAILS — collapsed (price comparison, checkout, visuals, trace) ── */}
@@ -2846,17 +2755,15 @@ export default function Page() {
   const handleScan = useCallback(() => {
     const trimmed = urlInput.trim()
     if (!trimmed) {
-      setUrlError("Enter a URL")
+      setUrlError("Enter a store URL to scan")
       return
     }
-    let normalized: string
-    try {
-      normalized = normalizeUrl(trimmed)
-      new URL(normalized)
-    } catch {
-      setUrlError("Invalid URL")
+    const validationError = validateUrl(trimmed)
+    if (validationError) {
+      setUrlError(validationError)
       return
     }
+    const normalized = normalizeUrl(trimmed)
 
     setUrlError("")
     setUrlInput("")
@@ -2913,29 +2820,22 @@ export default function Page() {
           </div>
 
           {/* Logo */}
-          <div className="absolute top-6 left-8 z-20">
+          <div className="absolute top-4 left-4 z-20 sm:top-6 sm:left-8">
             <DarkwatchLogo size="md" />
           </div>
 
           {/* Hero content */}
-          <div className="relative z-10 flex min-h-screen flex-col items-center justify-center px-6 pt-16">
-            <div className="mt-40 mb-10 text-center">
-              {/* Eyebrow */}
-              {/* <div className="mb-5 inline-flex items-center gap-2 rounded-full border border-[rgba(0,0,0,0.08)] bg-white/80 px-3 py-1 backdrop-blur-sm">
-                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[#ff4757]" />
-                <span className="text-[11px] font-semibold tracking-widest text-[#6b7280] uppercase">
-                  AI Shopping Bodyguard
-                </span>
-              </div> */}
+          <div className="relative z-10 flex min-h-screen flex-col items-center justify-center px-4 pt-16 sm:px-6">
+            <div className="mt-24 mb-8 text-center sm:mt-40 sm:mb-10">
               <h1
-                className="mb-4 text-[3.8rem] leading-[0.95] font-black tracking-tight text-[#111111]"
+                className="mb-4 text-[2.6rem] leading-[0.95] font-black tracking-tight text-[#111111] sm:text-[3.8rem]"
                 style={{ fontFamily: "var(--font-display)" }}
               >
                 NEVER GET
                 <br />
                 <span style={{ color: ACCENT }}>RIPPED OFF</span> AGAIN.
               </h1>
-              <p className="mx-auto max-w-sm text-base leading-relaxed text-[#6b7280]">
+              <p className="mx-auto max-w-sm text-sm leading-relaxed text-[#6b7280] sm:text-base">
                 Paste any store URL. Our AI browses it like a real shopper —
                 finding hidden fees, fake reviews, and dark patterns before you
                 pay.
@@ -2987,15 +2887,15 @@ export default function Page() {
               )}
 
               {/* Trust signal row */}
-              <div className="mt-4 flex items-center justify-center gap-4">
+              <div className="mt-4 flex flex-wrap items-center justify-center gap-x-3 gap-y-2 sm:gap-x-4">
                 {[
                   { icon: "🔒", label: "No account needed" },
                   { icon: "⚡", label: "Results in ~90s" },
                   { icon: "🤖", label: "GPT-4o powered" },
                 ].map(({ icon, label }) => (
-                  <div key={label} className="flex items-center gap-1.5">
-                    <span className="text-sm">{icon}</span>
-                    <span className="text-[11px] font-medium text-[#9ca3af]">
+                  <div key={label} className="flex items-center gap-1">
+                    <span className="text-xs sm:text-sm">{icon}</span>
+                    <span className="text-[10px] font-medium text-[#9ca3af] sm:text-[11px]">
                       {label}
                     </span>
                   </div>
@@ -3005,7 +2905,7 @@ export default function Page() {
           </div>
 
           {/* Footer credit */}
-          <div className="absolute right-8 bottom-6 z-20">
+          <div className="absolute right-3 bottom-3 z-20 sm:right-8 sm:bottom-6">
             <div className="flex items-center gap-2 rounded-xl border border-[rgba(0,0,0,0.08)] bg-white/85 px-3 py-2 backdrop-blur-sm">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
@@ -3075,7 +2975,7 @@ export default function Page() {
         >
           {/* Compact sticky header — logo + scan inputs */}
           <div className="sticky top-0 z-50 border-b border-[rgba(0,0,0,0.08)] bg-white/95 backdrop-blur-md">
-            <div className="mx-auto flex max-w-6xl items-center gap-4 px-6 py-3">
+            <div className="mx-auto flex max-w-6xl items-center gap-2 px-3 py-2.5 sm:gap-4 sm:px-6 sm:py-3">
               <DarkwatchLogo size="sm" />
               <div className="ml-auto flex w-full max-w-xl gap-2">
                 <div className="min-w-0 flex-1">
@@ -3133,7 +3033,7 @@ export default function Page() {
           </div>
 
           {/* Main content: bento grid + sticky globe sidebar */}
-          <div className="mx-auto flex max-w-6xl items-start gap-8 px-6 py-6">
+          <div className="mx-auto flex max-w-6xl items-start gap-8 px-3 py-4 sm:px-6 sm:py-6">
             {/* Left: bento grid */}
             <div className="min-w-0 flex-1">
               <div
@@ -3156,7 +3056,6 @@ export default function Page() {
               {/* Live multi-browser wall */}
               {(() => {
                 const liveFeeds = jobs
-                  .filter((j) => j.status === "scanning")
                   .flatMap((j) =>
                     j.liveScreenshots.map((s) => ({
                       key: `${j.id}-${s.streamId}`,
@@ -3210,9 +3109,7 @@ export default function Page() {
                         className={`grid gap-px bg-[rgba(255,255,255,0.04)] ${
                           liveFeeds.length === 1
                             ? "grid-cols-1"
-                            : liveFeeds.length <= 2
-                              ? "grid-cols-2"
-                              : "grid-cols-2 sm:grid-cols-3"
+                            : "grid-cols-2"
                         }`}
                       >
                         {liveFeeds.map((feed) => (
@@ -3230,7 +3127,7 @@ export default function Page() {
                               alt={feed.label}
                               className="block w-full"
                               style={{
-                                maxHeight: liveFeeds.length === 1 ? 480 : 220,
+                                maxHeight: liveFeeds.length === 1 ? 360 : 160,
                                 objectFit: "cover",
                                 objectPosition: "top",
                               }}

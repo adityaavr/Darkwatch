@@ -187,6 +187,12 @@ export type ScanResult = {
   marketplaceComparisons?: MarketplaceComparison
   wholesaleBenchmark?: WholesaleBenchmark
   sanitizedReceipt?: SanitizedReceipt
+  priceScout?: PriceScout
+}
+
+export type PriceScout = {
+  priceRange: { low: string; high: string } | null
+  listings: Array<{ store: string; price: string }>
 }
 
 export type ScanEvent =

@@ -16,7 +16,7 @@
 import type { ProfileComparison, ProfileResult, CheckoutAnalysis } from './types'
 
 // Re-export Playwright-powered functions so callers don't need to change imports
-export { getVisualDarkPatterns, getRedditSentiment } from './playwright-service'
+export { getVisualDarkPatterns, getRedditSentiment, getPriceScout } from './playwright-service'
 
 // ── Rotating user agents ───────────────────────────────────────────────────────
 
